@@ -1,0 +1,23 @@
+# 构建产物
+*.obj
+*.res
+*.lib
+*.pdb
+*.map
+*.exe
+
+# core-ui 第三方构建目录
+build-coreui/
+
+# 生成的头文件（由 build.ps1 从 app.uix 生成）
+src/app_uix.embed.h
+
+# 运行时数据 / 调试日志
+*.bin
+crash.log
+
+# 临时文件
+out_manifest_check.xml
+
+# IDE 本地工作/规划文档
+.trae/

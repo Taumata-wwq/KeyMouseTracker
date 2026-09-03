@@ -1,0 +1,153 @@
+# Core UI .uix Demo — English
+app_title=Core UI · .uix Single-File Components
+app_desc=Vue 3-style SFCs compiled to native Direct2D widgets via QuickJS-NG. Each left-side nav item showcases a core feature.
+
+# Navigation
+nav_home=Home
+nav_reactive=Reactive
+nav_button=Button
+nav_selection=Selection
+nav_input=Input
+nav_range=Range
+nav_status=Status
+nav_list=List
+nav_events=Events
+nav_layout=Layout
+nav_style=Style
+nav_overlay=Transparent bar
+nav_i18n=i18n
+nav_settings=Settings
+
+# Home cards
+card_controls=Controls
+card_controls_desc=Button, CheckBox, Radio, Toggle, Slider, ComboBox, TextInput, TextArea, ProgressBar
+card_layout=Layout
+card_layout_desc=Flex containers, gaps, separators, percentage sizing, nested layouts
+card_reactive=Reactive
+card_reactive_desc=data() + computed{} + methods{}, Proxy-driven reactive bridge with chained dep graph
+card_i18n=i18n
+card_i18n_desc=$t() + $locale auto-rebind; switch language and the whole page refreshes instantly
+
+# Reactive page
+react_title=Reactive — data + computed + methods
+react_desc=Click a button → method mutates this.X → Proxy set-trap fires → bindings re-run. Computed is lazy memo with chained deps.
+react_reset=reset
+
+# Button page
+btn_title=Buttons
+btn_desc=Trigger actions. Default, primary, custom colors, disabled states.
+btn_standard=Standard / Primary / Disabled
+btn_custom=Custom colors
+btn_with_state=Reactively-driven enabled state
+btn_default=Default
+btn_primary=Primary
+btn_disabled=Disabled
+btn_red=Red
+btn_green=Green
+btn_orange=Orange
+btn_purple=Purple
+btn_save=Save
+
+# Selection page
+sel_title=Selection
+sel_desc=CheckBox, RadioButton, Toggle for boolean / single-pick values.
+sel_checkbox=CheckBox
+sel_radio=RadioButton
+sel_toggle=Toggle
+sel_checked=Option A (default checked)
+sel_unchecked=Option B
+sel_disabled=Option C (disabled)
+sel_small=Small
+sel_medium=Medium
+sel_large=Large
+sel_wifi=Wi-Fi
+sel_bluetooth=Bluetooth
+sel_notif=Notifications
+
+# Input page
+input_title=Text Input
+input_desc=Single-line input + multi-line textarea. v-model two-way binding.
+input_single=Single-line
+input_multi=Multi-line
+input_name=Name
+input_email=Email
+input_pw=Password
+input_preview=Preview
+
+# Range page
+range_title=Range
+range_desc=Sliders (input type=range). v-model two-way binding.
+range_slider=Slider
+range_volume=Volume
+range_brightness=Brightness
+range_zoom=Zoom
+
+# Status page
+status_title=Status / Progress
+status_desc=ProgressBar showing task completion.
+status_progress=Progress bars
+status_dl=Download
+status_ul=Upload
+status_done=Done
+status_badges=Status badges
+
+# List page
+list_title=List — v-for + :key (keyed reuse)
+list_desc=:key="item.id" keeps widget identity per row across reorders. Checkbox state survives.
+list_items=items
+list_done=done
+list_pending=pending
+list_add=add
+list_reverse=reverse
+list_clear=clear
+
+# Events page
+events_title=Events
+events_desc=13 wired event types; mouse $event mirrors DOM MouseEvent: {offsetX, offsetY, clientX, clientY, button, buttons, deltaX, deltaY, ctrlKey, shiftKey, altKey}.
+events_box=click / dblclick / mousedown / mouseup / wheel inside this box
+events_count=events
+events_last=last
+
+# Layout page
+layout_title=Layout
+layout_desc=flex container + spacers + percentage sizes + separators.
+layout_hbox=Horizontal + flexible spacers
+layout_pct=Percentage sizing
+layout_sep=Separators
+layout_left=Left
+layout_center=Center
+layout_right=Right
+
+# Style page
+style_title=Style (CSS subset)
+style_desc=flex + box-shadow + gradient + transform + state pseudo-classes. No grid, no @keyframes, no media queries.
+style_dynamic=Dynamic :class
+style_fade=This line
+style_faded=faded
+style_normal=normal
+
+# Overlay page
+overlay_title=Transparent Toolbar
+overlay_desc=The image layer uses gh_img_view, with ordinary translucent UI controls drawn above it.
+overlay_toolbar=Floating tools
+overlay_select=Select
+overlay_crop=Crop
+overlay_mark=Mark
+
+# i18n page
+i18n_title=i18n — $t / $locale
+i18n_desc=$t(key) reads $locale internally; locale switch auto-rebinds every $t-using binding.
+i18n_switch=Switch language
+i18n_note=Click a button — every $t() call refires immediately.
+
+# Settings page
+settings_title=Settings
+settings_lang=Language
+settings_appearance=Appearance
+settings_dark=Dark mode
+settings_about=About
+settings_about_desc=Vue 3 SFCs + QuickJS-NG eval, Direct2D self-rendered.
+
+# Greetings (used on i18n page)
+greeting_hello=Hello, Core UI!
+greeting_welcome=Welcome to the .uix single-file component demo.

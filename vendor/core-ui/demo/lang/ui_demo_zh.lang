@@ -1,0 +1,153 @@
+# Core UI .uix Demo — 简体中文
+app_title=Core UI · .uix 单文件组件
+app_desc=基于 Direct2D + QuickJS-NG 的 Vue 3 风格单文件组件运行时。每个左侧导航项展示一项核心特性。
+
+# Navigation
+nav_home=首页
+nav_reactive=响应式
+nav_button=按钮
+nav_selection=选择控件
+nav_input=文本输入
+nav_range=范围控件
+nav_status=状态/进度
+nav_list=列表
+nav_events=事件
+nav_layout=布局
+nav_style=样式
+nav_overlay=透明工具条
+nav_i18n=国际化
+nav_settings=设置
+
+# Home cards
+card_controls=控件
+card_controls_desc=Button、CheckBox、Radio、Toggle、Slider、ComboBox、TextInput、TextArea、ProgressBar
+card_layout=布局
+card_layout_desc=flex 容器、间距、分隔线、百分比尺寸、嵌套
+card_reactive=响应式
+card_reactive_desc=data() + computed{} + methods{},Proxy 反应式桥 + WatchEffect
+card_i18n=国际化
+card_i18n_desc=$t() + $locale 自动重绑;切换语言整页瞬间刷新
+
+# Reactive page
+react_title=响应式 — data + computed + methods
+react_desc=点击按钮 → 方法体修改 this.X → Proxy set-trap 触发 → 绑定重算。computed 是惰性 memo,链式依赖自动更新。
+react_reset=重置
+
+# Button page
+btn_title=按钮
+btn_desc=触发动作。支持默认、主色、自定义颜色、禁用态等。
+btn_standard=标准 / 主色 / 禁用
+btn_custom=自定义颜色
+btn_with_state=带响应式状态的按钮
+btn_default=默认
+btn_primary=主色
+btn_disabled=禁用
+btn_red=红色
+btn_green=绿色
+btn_orange=橙色
+btn_purple=紫色
+btn_save=保存
+
+# Selection page
+sel_title=选择控件
+sel_desc=CheckBox、RadioButton、Toggle 用于选择布尔/单选值。
+sel_checkbox=复选框
+sel_radio=单选按钮
+sel_toggle=开关
+sel_checked=选项 A(默认选中)
+sel_unchecked=选项 B
+sel_disabled=选项 C(禁用)
+sel_small=小
+sel_medium=中
+sel_large=大
+sel_wifi=无线网络
+sel_bluetooth=蓝牙
+sel_notif=通知
+
+# Input page
+input_title=文本输入
+input_desc=单行 input + 多行 textarea。v-model 双向绑定。
+input_single=单行
+input_multi=多行
+input_name=姓名
+input_email=邮箱
+input_pw=密码
+input_preview=预览
+
+# Range page
+range_title=范围控件
+range_desc=滑块 (input type=range)。v-model 双向绑定。
+range_slider=滑块
+range_volume=音量
+range_brightness=亮度
+range_zoom=缩放
+
+# Status page
+status_title=状态 / 进度
+status_desc=ProgressBar 显示任务完成度。
+status_progress=进度条
+status_dl=下载
+status_ul=上传
+status_done=完成
+status_badges=状态徽章
+
+# List page
+list_title=列表 — v-for + :key (keyed reuse)
+list_desc=:key="item.id" 让每行保持 widget identity。重排不重建,checkbox 状态保留。
+list_items=项
+list_done=已完成
+list_pending=待办
+list_add=新增
+list_reverse=反转
+list_clear=清空
+
+# Events page
+events_title=事件
+events_desc=13 种 wired 事件类型,鼠标 $event 对标 DOM MouseEvent: {offsetX,offsetY,clientX,clientY,button,buttons,deltaX,deltaY,修饰键}。
+events_box=点击 / 双击 / 滚轮 / 鼠标按下抬起 都会被捕获
+events_count=次事件
+events_last=最近
+
+# Layout page
+layout_title=布局
+layout_desc=flex 容器 + spacer + 百分比 + 分隔线。
+layout_hbox=水平 + 弹性间隔
+layout_pct=百分比尺寸
+layout_sep=分隔线
+layout_left=左
+layout_center=中
+layout_right=右
+
+# Style page
+style_title=样式 (CSS 子集)
+style_desc=flex + box-shadow + 渐变 + transform + 状态伪类。无 grid、动画、媒体查询。
+style_dynamic=动态 :class
+style_fade=本行
+style_faded=已淡化
+style_normal=正常
+
+# Overlay page
+overlay_title=透明工具条
+overlay_desc=底图使用 gh_img_view 绘制,上层工具条使用普通 UI 控件半透明叠加。
+overlay_toolbar=浮动工具条
+overlay_select=选择
+overlay_crop=裁剪
+overlay_mark=标注
+
+# i18n page
+i18n_title=国际化 — $t / $locale
+i18n_desc=$t(key) 内部读取 $locale,locale 切换自动 re-fire 所有 $t 绑定。
+i18n_switch=切换语言
+i18n_note=点击按钮立即切换,所有 $t() 调用立刻刷新。
+
+# Settings page
+settings_title=设置
+settings_lang=语言
+settings_appearance=外观
+settings_dark=深色模式
+settings_about=关于
+settings_about_desc=Vue 3 SFC + QuickJS-NG 求值,Direct2D 自绘渲染。
+
+# Greetings (used on i18n page)
+greeting_hello=你好,Core UI!
+greeting_welcome=欢迎使用 .uix 单文件组件演示。

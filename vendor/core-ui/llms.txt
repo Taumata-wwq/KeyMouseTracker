@@ -1,0 +1,41 @@
+# CORE UI
+
+> A small single-DLL Windows desktop UI framework with a pure C API (400+ functions) and Vue-style `.uix` single-file components. Purpose-built for LLMs and AI agents: public types are plain C handles, UI can be generated as one `.uix` file, and `docs/uix-ai-guide.md` contains the compact rules an agent needs to emit a runnable interface. The debug API (`ui_debug_*`, Named Pipe IPC, screenshots, tree dump, input simulation) enables closed-loop UI generation: emit code → build → click / type / screenshot → self-verify.
+
+Why this matters for AI code generation:
+
+- **Pure C ABI** — no C++ templates, no std::*, no inheritance; LLMs rarely hallucinate type errors.
+- **Declarative `.uix` SFC** — one file contains `<window>`, `<script>`, `<style>`, and `<template>`.
+- **One-file cheatsheet** — `docs/uix-ai-guide.md` is the first file an agent should fetch.
+- **Vue-like mental model** — `data()`, `computed`, `methods`, `v-if`, `v-for`, `v-model`, and CSS flex transfer cleanly from frontend examples.
+- **Stable naming** — `ui_<noun>_<verb>` / `Ui<Noun>` patterns; predictable and greppable.
+
+## For AI agents (start here)
+
+- [UIX AI Guide](docs/uix-ai-guide.md): single-file, self-contained guide for generating `.uix` components. **Fetch this first.**
+- [UIX Detailed Guide](docs/uix-guide.md): complete `.uix` reference, CSS subset, widget mapping, cookbook, and limitations.
+- [Debug & Automation](docs/debug-simulation.md): event-injection API — how an agent can click / type / select menu items / screenshot programmatically to verify its own generated UI.
+- [API Index](UI_CORE_API.md): full list of exported C functions, grouped by module.
+- [C API Reference](docs/c-api.md): parameter-level detail for every function.
+- [Legacy Markup Reference](docs/markup.md): old `.ui` XML grammar, kept for compatibility paths.
+
+## Docs
+
+- [Getting Started](docs/getting-started.md): integration guide (CMake + MSVC / clang-cl).
+- [Controls](docs/controls.md): per-control spec (properties, events, defaults).
+- [Layout](docs/layout.md): VBox / HBox / Grid / Stack / percentage / absolute positioning.
+- [Design System](docs/design-system.md): Fluent 2 color tokens, spacing, typography.
+- [Internationalization](docs/i18n.md): `.lang` files and `@key` references.
+- [Changelog](CHANGELOG.md): version history (`MAJOR.MINOR.PATCH.BUILD`).
+
+## Examples
+
+- [Demo source](demo/ui_demo_uix.cpp): minimal host code that opens the `.uix` demo.
+- [Demo UIX](demo/ui_demo.uix): multi-page `.uix` application with reactive state, lists, events, i18n, and theming.
+- [Language packs](demo/lang/): `zh-CN.lang` and `en.lang` samples.
+
+## Meta
+
+- Platform: Windows 10 and later (x86_64).
+- Build: CMake 3.20+ with MSVC 2019+ or clang-cl (C++17).
+- License: MIT.

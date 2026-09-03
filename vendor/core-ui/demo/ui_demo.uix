@@ -1,0 +1,823 @@
+<window title="Core UI .uix Demo" width="1100" height="720"
+        min-width="700" min-height="500"
+        resizable="true" centered="true" frameless="true" theme="light"/>
+
+<script>
+// ui-demo .uix port + new feature pages, all in one file. Default locale
+// is zh (Simplified Chinese); the i18n page lets the user switch to en
+// and back. Driver-side cpp polls state.requestedLocale via SetTimer
+// and forwards to ui_page_set_locale, since methods{} can't call C
+// directly.
+export default {
+  data() {
+    return {
+      page: "home",
+      requestedLocale: "zh",   // C-side timer watches this and calls set_locale
+
+      // ---- Reactive page ----
+      count: 0,
+
+      // ---- Selection page ----
+      agreeA: true,  agreeB: false,  agreeC: true,
+      sizeS: false,  sizeM: true,    sizeL: false,
+      wifi: true,    bt: false,      notif: true,
+      color: 0,
+
+      // ---- Input page ----
+      name: "Alice",
+      email: "alice@example.com",
+      pw: "",
+      bio: "在这里输入多行文本……",
+
+      // ---- Range page ----
+      vol: 65,
+      bright: 80,
+      zoom: 100,
+      n_int: 42,
+      n_dec: 0.5,
+
+      // ---- Status page ----
+      dl: 73, ul: 45, done: 100,
+
+      // ---- List page ----
+      items: [
+        { id: 1, label: "alpha",   done: false },
+        { id: 2, label: "beta",    done: true  },
+        { id: 3, label: "gamma",   done: false }
+      ],
+
+      // ---- Events page ----
+      lastEvent: "(none)",
+      eventCount: 0,
+      dropLog: "drop here",
+      tplValue: "{alpha} - x",
+      menuTransparent: true,
+      menuBlur: 22,
+
+      // ---- Settings page ----
+      dark: false,
+      overlayMode: "select",
+
+      // ---- Animation stress page ----
+      stressSwitch: false,
+      stressCheck: true,
+      stressRadioA: true,
+      stressRadioB: false,
+      stressSlider: 35,
+      stressProgress: 25,
+      stressWide: false,
+      stressTall: false
+    };
+  },
+
+  computed: {
+    doubled()    { return this.count * 2; },
+    triple()     { return this.count + this.doubled; },
+    canSave()    { return this.name.length > 0; },
+    itemCount()  { return this.items.length; },
+    doneCount()  { return this.items.filter(x => x.done).length; },
+    pending()    { return this.itemCount - this.doneCount; },
+    colorName()  {
+      var names = ["蓝", "绿", "红", "黄", "紫"];
+      return names[this.color] || "—";
+    }
+  },
+
+  methods: {
+    nav(p) { this.page = p; },
+
+    setLang(loc) { this.requestedLocale = loc; },
+    setOverlayMode(mode) { this.overlayMode = mode; },
+
+    // Reactive
+    inc()   { this.count++; },
+    dec()   { this.count--; },
+    reset() { this.count = 0; },
+
+    // List
+    addItem() {
+      var next = this.items.slice();
+      next.push({ id: Date.now(),
+                   label: "项目-" + (this.items.length + 1),
+                   done: false });
+      this.items = next;
+    },
+    removeItem(item) {
+      this.items = this.items.filter(x => x.id !== item.id);
+    },
+    toggleDone(item) {
+      this.items = this.items.map(x =>
+        x.id === item.id ? { id: x.id, label: x.label, done: !x.done } : x);
+    },
+    reverseList() { this.items = this.items.slice().reverse(); },
+    clearList()   { this.items = []; },
+
+    // Events
+    probe(name, ev) {
+      this.eventCount++;
+      var s = name;
+      if (ev && typeof ev === "object") {
+        if ("offsetX" in ev)
+          s += ` off(${Math.round(ev.offsetX)},${Math.round(ev.offsetY)})` +
+               ` cli(${Math.round(ev.clientX)},${Math.round(ev.clientY)})`;
+        if (ev.deltaY || ev.deltaX)
+          s += ` ΔY${ev.deltaY} ΔX${ev.deltaX}`;
+        if ("button" in ev) s += ` btn=${ev.button}/${ev.buttons}`;
+        var mods = (ev.ctrlKey ? "C" : "") + (ev.shiftKey ? "S" : "") +
+                   (ev.altKey ? "A" : "");
+        if (mods) s += ` [${mods}]`;
+      }
+      this.lastEvent = s;
+    },
+    onClick($e)     { this.probe("click",     $e); },
+    onDblClick($e)  { this.probe("dblclick",  $e); },
+    onMouseDown($e) { this.probe("mousedown", $e); },
+    onMouseUp($e)   { this.probe("mouseup",   $e); },
+    onMouseMove($e) { this.probe("mousemove", $e); },
+    onMouseEnter($e){ this.probe("mouseenter",$e); },
+    onMouseLeave()  { this.probe("mouseleave", null); },
+    onCtxMenu($e)   { this.probe("contextmenu", $e); },
+    onDragStart($e) { $e.data = "dynamic-" + this.eventCount; this.probe("dragstart", $e); },
+    onDragEnd($e)   { this.probe("dragend(" + $e + ")", null); },
+    onDragEnter($e) { this.probe("dragenter", $e); },
+    onDragLeave()   { this.probe("dragleave", null); },
+    onDrop($e)      {
+      this.dropLog = "got: " + $e.data +
+                     " @(" + Math.round($e.offsetX) + "," + Math.round($e.offsetY) + ")";
+      this.probe("drop", $e);
+    },
+    onWheel($e)     { this.probe("wheel",     $e); },
+    onFocus()       { this.probe("focus",     null); },
+    onBlur()        { this.probe("blur",      null); },
+
+    // Animation stress
+    stressFlip() {
+      this.stressSwitch = !this.stressSwitch;
+      this.stressCheck = !this.stressCheck;
+      this.stressRadioA = !this.stressRadioA;
+      this.stressRadioB = !this.stressRadioB;
+      this.stressSlider = this.stressSlider > 50 ? 12 : 88;
+      this.stressProgress = this.stressProgress > 50 ? 18 : 92;
+      this.stressWide = !this.stressWide;
+      this.stressTall = !this.stressTall;
+    },
+    stressBurst() {
+      for (var i = 0; i < 17; i++) this.stressFlip();
+    }
+  }
+}
+</script>
+
+<style>
+  /* ============ shell ============
+     All container surfaces / text colors come from library-provided CSS
+     vars (--bg / --fg / --sidebar-bg / --card-bg / ...). Calling
+     ui_theme_set_mode flips the var values in place and re-cascades, so
+     no `.dark`-prefixed duplicate rules are needed. */
+  .shell    { gap: 0; background: var(--bg); }
+  .body     { flex-direction: row; gap: 0; flex: 1; }
+
+  /* sidebar */
+  .sidebar  { width: 220; padding: 4px; gap: 1px; background: var(--sidebar-bg); }
+  .nav      { flex-direction: row; align-items: center; gap: 10px;
+              padding: 0 12px; height: 36px; border-radius: 4px;
+              cursor: pointer; }
+  .nav:hover{ background: var(--sidebar-hover); }
+  .nav.on   { background: var(--bg-3); }
+  .nav.on .nav-bar { background: var(--accent); }
+  .nav-bar  { width: 3px; height: 18px; border-radius: 2px; background: transparent; }
+  .nav-icon { width: 20px; height: 20px; color: var(--sidebar-text); }
+  .nav-text { font-size: 13px; color: var(--sidebar-text); }
+  .nav.on .nav-icon { color: var(--fg); }
+  .nav.on .nav-text { color: var(--fg); font-weight: 600; }
+  .nav-spacer { flex: 1; }
+  .nav-sep  { height: 1; background: var(--border-subtle); margin: 4px 8px; }
+
+  /* content */
+  .content  { padding: 32px 40px; gap: 14px; flex: 1; background: var(--bg); }
+  .h1       { font-size: 26px; color: var(--fg); font-weight: 700; }
+  .desc     { font-size: 14px; color: var(--fg-3); }
+  .sep      { height: 1; background: var(--border-subtle); }
+  .h2       { font-size: 15px; color: var(--fg); font-weight: 600;
+              padding-top: 6px; }
+  .lbl      { font-size: 13px; color: var(--fg-2); }
+  .item     { font-size: 14px; color: var(--fg); }
+  .item.done{ color: var(--fg-4); }
+  .row      { flex-direction: row; gap: 8px; align-items: center; }
+
+  /* home cards */
+  .crow     { flex-direction: row; gap: 16px; }
+  .card     { padding: 16px; gap: 6px; flex: 1; background: var(--card-bg);
+              border-radius: 6px; }
+  .card .h2 { font-size: 15px; color: var(--fg); font-weight: 600; padding-top: 0; }
+  .card .lbl{ font-size: 12px; color: var(--fg-3); }
+
+  .panel    { padding: 14px; gap: 8px; background: var(--card-bg); border-radius: 6px; }
+
+  /* buttons */
+  button         { background: var(--accent); color: #ffffff; padding: 6px 14px;
+                   border-radius: 4px; cursor: pointer; font-size: 13px; }
+  button:hover   { opacity: 0.9; }
+  button.danger  { background: #ef4444; }
+  button.subtle  { background: #6b7280; }
+  button.success { background: #22c55e; }
+  button.warning { background: #eab308; }
+  button.purple  { background: #8b5cf6; }
+  button:disabled{ background: #9ca3af; cursor: default; }
+
+  /* status badges */
+  .badge      { font-size: 11px; padding: 2px 8px; border-radius: 10px;
+                color: #ffffff; }
+  .badge.info { background: var(--accent); }
+  .badge.ok   { background: #22c55e; }
+  .badge.warn { background: #eab308; color: #1f2937; }
+  .badge.err  { background: #ef4444; }
+
+  .evbox    { padding: 28px; border-radius: 6px;
+              background-color: #0f172a;
+              background-image: linear-gradient(135deg,
+                #ef4444 0%, #f97316 18%, #eab308 34%, #22c55e 50%,
+                #06b6d4 66%, #3b82f6 82%, #a855f7 100%);
+              box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32);
+              color: #ffffff; font-size: 13px; font-weight: 600; cursor: pointer;
+              min-height: 96px; align-items: center; }
+  .evlog    { padding: 8px 12px; background: var(--bg-2); border-radius: 4px;
+              font-size: 12px; color: var(--fg); }
+
+  /* drag & drop demo */
+  .dnd-row  { flex-direction: row; gap: 8px; align-items: center; }
+  .dragchip { padding: 5px 14px; border-radius: 14px; background: var(--bg-2);
+              border: 1px solid var(--border-subtle); font-size: 12px; }
+  .dragchip:hover { background: var(--bg-3); }
+  .dropzone { height: 64px; border: 2px dashed var(--border-subtle);
+              border-radius: 8px; align-items: center; justify-content: center; }
+  .dropzone:drag-over { border-color: var(--accent); background: var(--bg-3); }
+
+  /* progress bar — flex of 2 divs simulates filled/empty track */
+  .pbar     { flex-direction: row; height: 8; border-radius: 4;
+              background: var(--bg-3); }
+  .pfill    { background: var(--accent); border-radius: 4; }
+  .overlay-stage { height: 360px; overflow: hidden; border-radius: 6px;
+                   background: #101827; box-shadow: 0 18px 42px 0 rgba(15,23,42,0.22); }
+  .overlay-gh { position: absolute; left: 0; top: 0; width: 100%; height: 360px;
+                background: #101827; cursor: grab; }
+  .overlay-toolbar { position: absolute; left: 24px; top: 24px; width: 88%; height: 58px;
+                     flex-direction: row; align-items: center; gap: 8px; padding: 0 12px;
+                     border-radius: 6px; backdrop-filter: blur(16px);
+                     background: rgba(255,255,255,0.36);
+                     border: 1px solid rgba(255,255,255,0.78);
+                     box-shadow: 0 12px 30px 0 rgba(15,23,42,0.22); }
+  .overlay-title { font-size: 13px; font-weight: 700; color: #0f172a; }
+  .overlay-tool { width: 66px; height: 34px; border-radius: 5px;
+                  align-items: center; justify-content: center;
+                  background: #ffffff; color: #0f172a;
+                  font-size: 12px; text-align: center; }
+  .overlay-tool.on { background: #2563eb; color: #ffffff; }
+  .overlay-spacer { flex: 1; }
+  .overlay-meter { width: 86px; height: 8px; border-radius: 4px; background: #cbd5e1; }
+  .overlay-meter-fill { width: 56px; height: 8px; border-radius: 4px; background: #2563eb; }
+  .stress-box { background: var(--accent); border-radius: 6px; padding: 8px;
+                color: #ffffff; transition: width 180ms ease-out, height 180ms ease-out; }
+</style>
+
+<template>
+<div class="shell">
+  <TitleBar class="titlebar" title="Core UI .uix Demo"/>
+
+  <div class="body">
+
+    <!-- ============ Sidebar ============ -->
+    <div class="sidebar">
+
+      <div class="nav" :class="page=='home' ? 'on' : ''" @click="nav('home')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_home') }}</label>
+      </div>
+
+      <div id="navReact" class="nav" :class="page=='react' ? 'on' : ''" @click="nav('react')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M12 2L4 7v10l8 5 8-5V7l-8-5zm0 2.31L18 8v8l-6 3.75L6 16V8l6-3.69z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_reactive') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='button' ? 'on' : ''" @click="nav('button')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M19 6H5a2 2 0 00-2 2v8a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2zm0 10H5V8h14v8z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_button') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='selection' ? 'on' : ''" @click="nav('selection')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M19 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V5a2 2 0 00-2-2zm-9 14l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_selection') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='input' ? 'on' : ''" @click="nav('input')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M2.5 4v3h5v12h3V7h5V4h-13zm19 5h-9v3h3v7h3v-7h3V9z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_input') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='range' ? 'on' : ''" @click="nav('range')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_range') }}</label>
+      </div>
+
+      <div id="navStatus" class="nav" :class="page=='status' ? 'on' : ''" @click="nav('status')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M19 4H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm0 14H5V6h14v12zM6 10h8v4H6z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_status') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='list' ? 'on' : ''" @click="nav('list')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_list') }}</label>
+      </div>
+
+      <div id="navEvents" class="nav" :class="page=='events' ? 'on' : ''" @click="nav('events')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.5 2.54l2.6 1.53c.56-1.24.9-2.62.9-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05c-5.06.5-9 4.76-9 9.95 0 5.52 4.47 10 9.99 10 3.31 0 6.24-1.61 8.06-4.09l-2.6-1.53C16.17 17.98 14.21 19 12 19z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_events') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='layout' ? 'on' : ''" @click="nav('layout')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_layout') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='style' ? 'on' : ''" @click="nav('style')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M12 3a9 9 0 100 18 1.5 1.5 0 001.5-1.5c0-.39-.15-.74-.39-1A1.5 1.5 0 0114.25 16h1.77A4.98 4.98 0 0021 11c0-4.42-4.03-8-9-8zm-5.5 9a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm3-4a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm4.5 4a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_style') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='overlay' ? 'on' : ''" @click="nav('overlay')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M4 5h16v10H4V5zm2 2v6h12V7H6zm-2 10h16v2H4v-2z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_overlay') }}</label>
+      </div>
+
+      <div class="nav" :class="page=='stress' ? 'on' : ''" @click="nav('stress')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/>
+        </svg>
+        <label class="nav-text">动画压力</label>
+      </div>
+
+      <div class="nav-spacer"/>
+      <div class="nav-sep"/>
+
+      <div class="nav" :class="page=='i18n' ? 'on' : ''" @click="nav('i18n')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_i18n') }}</label>
+      </div>
+
+      <div id="navSettings" class="nav" :class="page=='settings' ? 'on' : ''" @click="nav('settings')">
+        <div class="nav-bar"/>
+        <svg class="nav-icon" width="20" height="20" viewBox="0 0 24 24">
+          <path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.6 3.6 0 0112 15.6z"/>
+        </svg>
+        <label class="nav-text">{{ $t('nav_settings') }}</label>
+      </div>
+    </div>
+
+    <!-- ============ Content ============ -->
+    <div class="content">
+
+      <!-- ===== 首页 ===== -->
+      <div v-if="page=='home'">
+        <label class="h1">{{ $t('app_title') }}</label>
+        <label class="desc">{{ $t('app_desc') }}</label>
+        <div class="sep"/>
+        <div class="crow">
+          <div class="card">
+            <label class="h2">{{ $t('card_controls') }}</label>
+            <label class="lbl">{{ $t('card_controls_desc') }}</label>
+          </div>
+          <div class="card">
+            <label class="h2">{{ $t('card_reactive') }}</label>
+            <label class="lbl">{{ $t('card_reactive_desc') }}</label>
+          </div>
+        </div>
+        <div class="crow">
+          <div class="card">
+            <label class="h2">{{ $t('card_layout') }}</label>
+            <label class="lbl">{{ $t('card_layout_desc') }}</label>
+          </div>
+          <div class="card">
+            <label class="h2">{{ $t('card_i18n') }}</label>
+            <label class="lbl">{{ $t('card_i18n_desc') }}</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 响应式 ===== -->
+      <div v-if="page=='react'">
+        <label class="h1">{{ $t('react_title') }}</label>
+        <label class="desc">{{ $t('react_desc') }}</label>
+        <div class="sep"/>
+        <div class="panel">
+          <label class="h2">count = {{ count }}</label>
+          <label class="lbl">doubled = {{ doubled }}    (count * 2)</label>
+          <label class="lbl">triple = {{ triple }}      (count + doubled)</label>
+          <div class="row">
+            <button @click="inc">+1</button>
+            <button @click="dec">−1</button>
+            <button @click="reset" class="danger">{{ $t('react_reset') }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 按钮 ===== -->
+      <div v-if="page=='button'">
+        <label class="h1">{{ $t('btn_title') }}</label>
+        <label class="desc">{{ $t('btn_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('btn_standard') }}</label>
+        <div class="row">
+          <button class="subtle">{{ $t('btn_default') }}</button>
+          <button>{{ $t('btn_primary') }}</button>
+          <button :enabled="false">{{ $t('btn_disabled') }}</button>
+        </div>
+        <label class="h2">{{ $t('btn_custom') }}</label>
+        <div class="row">
+          <button class="danger">{{ $t('btn_red') }}</button>
+          <button class="success">{{ $t('btn_green') }}</button>
+          <button class="warning">{{ $t('btn_orange') }}</button>
+          <button class="purple">{{ $t('btn_purple') }}</button>
+        </div>
+        <label class="h2">{{ $t('btn_with_state') }}</label>
+        <div class="row">
+          <button :enabled="canSave" @click="probe('save', null)">{{ $t('btn_save') }}</button>
+          <input v-model="name" placeholder="name (空时 Save 禁用)"/>
+        </div>
+      </div>
+
+      <!-- ===== 选择 ===== -->
+      <div v-if="page=='selection'">
+        <label class="h1">{{ $t('sel_title') }}</label>
+        <label class="desc">{{ $t('sel_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('sel_checkbox') }}</label>
+        <div class="row"><input type="checkbox" v-model="agreeA"/><label class="lbl">{{ $t('sel_checked') }}</label></div>
+        <div class="row"><input type="checkbox" v-model="agreeB"/><label class="lbl">{{ $t('sel_unchecked') }}</label></div>
+        <div class="row"><input type="checkbox" v-model="agreeC" :enabled="false"/><label class="lbl">{{ $t('sel_disabled') }}</label></div>
+
+        <label class="h2">{{ $t('sel_radio') }}</label>
+        <div class="row"><input type="radio" name="size" v-model="sizeS"/><label class="lbl">{{ $t('sel_small') }}</label></div>
+        <div class="row"><input type="radio" name="size" v-model="sizeM"/><label class="lbl">{{ $t('sel_medium') }}</label></div>
+        <div class="row"><input type="radio" name="size" v-model="sizeL"/><label class="lbl">{{ $t('sel_large') }}</label></div>
+
+        <label class="h2">{{ $t('sel_toggle') }}</label>
+        <div class="row"><toggle v-model="wifi"/><label class="lbl">{{ $t('sel_wifi') }}</label></div>
+        <div class="row"><toggle v-model="bt"/><label class="lbl">{{ $t('sel_bluetooth') }}</label></div>
+        <div class="row"><toggle v-model="notif"/><label class="lbl">{{ $t('sel_notif') }}</label></div>
+      </div>
+
+      <!-- ===== 文本输入 ===== -->
+      <div v-if="page=='input'">
+        <label class="h1">{{ $t('input_title') }}</label>
+        <label class="desc">{{ $t('input_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('input_single') }}</label>
+        <div class="panel">
+          <label class="lbl">{{ $t('input_name') }}</label>
+          <input v-model="name"/>
+          <label class="lbl">{{ $t('input_email') }}</label>
+          <input v-model="email"/>
+          <label class="lbl">{{ $t('input_pw') }}</label>
+          <input v-model="pw" placeholder="********"/>
+        </div>
+        <label class="h2">{{ $t('input_multi') }}</label>
+        <textarea v-model="bio"/>
+        <label class="lbl">{{ $t('input_preview') }}: {{ name }} · {{ email }}</label>
+      </div>
+
+      <!-- ===== 范围控件 ===== -->
+      <div v-if="page=='range'">
+        <label class="h1">{{ $t('range_title') }}</label>
+        <label class="desc">{{ $t('range_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('range_slider') }}</label>
+        <div class="panel">
+          <label class="lbl">{{ $t('range_volume') }} = {{ vol }}</label>
+          <input type="range" min="0" max="100" v-model="vol"/>
+          <label class="lbl">{{ $t('range_brightness') }} = {{ bright }}</label>
+          <input type="range" min="0" max="100" v-model="bright"/>
+          <label class="lbl">{{ $t('range_zoom') }} = {{ zoom }}%</label>
+          <input type="range" min="10" max="200" v-model="zoom"/>
+        </div>
+      </div>
+
+      <!-- ===== 状态 ===== -->
+      <div v-if="page=='status'">
+        <label class="h1">{{ $t('status_title') }}</label>
+        <label class="desc">{{ $t('status_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('status_progress') }}</label>
+        <div class="panel">
+          <label class="lbl">{{ $t('status_dl') }} {{ dl }}%</label>
+          <progressbar min="0" max="100" :value="dl"/>
+          <label class="lbl">{{ $t('status_ul') }} {{ ul }}%</label>
+          <progressbar min="0" max="100" :value="ul"/>
+          <label class="lbl">{{ $t('status_done') }} {{ done }}%</label>
+          <progressbar min="0" max="100" :value="done"/>
+        </div>
+        <label class="h2">{{ $t('status_badges') }}</label>
+        <div class="row">
+          <label class="badge info">INFO</label>
+          <label class="badge ok">OK</label>
+          <label class="badge warn">WARN</label>
+          <label class="badge err">ERR</label>
+        </div>
+      </div>
+
+      <!-- ===== 列表 ===== -->
+      <div v-if="page=='list'">
+        <label class="h1">{{ $t('list_title') }}</label>
+        <label class="desc">{{ $t('list_desc') }}</label>
+        <div class="sep"/>
+        <div class="panel">
+          <label class="h2">{{ itemCount }} {{ $t('list_items') }} · {{ doneCount }} {{ $t('list_done') }} · {{ pending }} {{ $t('list_pending') }}</label>
+          <div v-for="(item, i) in items" :key="item.id" class="row">
+            <input type="checkbox" :checked="item.done" @change="toggleDone(item)"/>
+            <label :class="item.done ? 'item done' : 'item'">{{ i }}: #{{ item.id }} {{ item.label }}</label>
+            <button class="danger" @click="removeItem(item)">×</button>
+          </div>
+          <div class="row">
+            <button id="btnListAdd"     @click="addItem">{{ $t('list_add') }}</button>
+            <button id="btnListReverse" @click="reverseList" class="subtle">{{ $t('list_reverse') }}</button>
+            <button id="btnListClear"   @click="clearList"   class="danger">{{ $t('list_clear') }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 事件 ===== -->
+      <!-- 用 v-show 而非 v-if：本页含右键 <menu>，而库当前在 v-if 子树挂载时
+           不实例化菜单 items（弹出空矩形）。v-show 保持子树常驻，菜单 items 在
+           页面加载时就建好。库 bug 修复后可改回 v-if。详见 testdata/menu_vif.uix。 -->
+      <div v-show="page=='events'">
+        <label class="h1">{{ $t('events_title') }}</label>
+        <label class="desc">{{ $t('events_desc') }}</label>
+        <div class="sep"/>
+        <div class="panel">
+          <label class="h2">右键菜单材质</label>
+          <div class="row">
+            <toggle id="menuTransparentSwitch" v-model="menuTransparent"/>
+            <label class="lbl">半透明菜单</label>
+          </div>
+          <label class="lbl">模糊程度 = {{ menuBlur }}px</label>
+          <input id="menuBlurSlider" type="range" min="0" max="36" v-model="menuBlur"/>
+          <div class="sep"/>
+          <div class="row">
+            <button @click="onClick">click</button>
+            <button @dblclick="onDblClick">dblclick</button>
+          </div>
+          <input v-model="name" @focus="onFocus" @blur="onBlur"
+                 placeholder="focus / blur"/>
+          <div id="evboxRoot" class="evbox" @mousedown="onMouseDown" @mouseup="onMouseUp"
+               @wheel="onWheel" @click="onClick" @mousemove="onMouseMove"
+               @mouseenter="onMouseEnter" @mouseleave="onMouseLeave"
+               @contextmenu="onCtxMenu">
+            {{ $t('events_box') }}
+          </div>
+          <label class="evlog">{{ eventCount }} {{ $t('events_count') }} · {{ $t('events_last') }}: {{ lastEvent }}</label>
+
+          <div class="sep"/>
+          <label class="h2">Drag &amp; Drop</label>
+          <div class="dnd-row">
+            <label id="chipA" class="dragchip" drag-data="alpha">alpha</label>
+            <label id="chipB" class="dragchip" drag-data="beta">beta</label>
+            <label id="chipC" class="dragchip" draggable="true"
+                   @dragstart="onDragStart" @dragend="onDragEnd">dynamic</label>
+          </div>
+          <div id="dropZone" class="dropzone" @drop="onDrop"
+               @dragenter="onDragEnter" @dragleave="onDragLeave">
+            <label class="lbl">{{ dropLog }}</label>
+          </div>
+
+          <label class="h2">ChipsInput</label>
+          <chips-input id="chipsDemo" v-model="tplValue"
+                       chip-labels="alpha=Alpha 变量;beta=Beta"
+                       placeholder="type text or drop chips here"/>
+          <label class="evlog">value: {{ tplValue }}</label>
+
+          <!-- build 75/130 (L73) BREAKING 后的菜单语法：@click 事件 + 文本包 <label>。
+               旧写法 onclick="..." + 裸文本运行时建不出菜单项（弹出空矩形）。 -->
+          <menu id="eventsContext" trigger="#evboxRoot" event="rclick">
+            <menuitem id="1" @click="onClick" shortcut="Ctrl+C">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9 9h10v10H9zM5 5h10v2H7v8H5z"/></svg>
+              <label>复制</label>
+            </menuitem>
+            <menuitem id="2" @click="onClick" shortcut="Ctrl+X">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM6 19.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>
+              <label>剪切</label>
+            </menuitem>
+            <separator/>
+            <menuitem id="3" @click="onClick" shortcut="Ctrl+E">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              <label>编辑</label>
+            </menuitem>
+            <menuitem id="4" @click="onClick" shortcut="Ctrl+Shift+X">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 2v14a2 2 0 0 0 2 2h14M6 6l16 16M22 6h-4M22 22h-4"/></svg>
+              <label>裁剪</label>
+            </menuitem>
+            <separator/>
+            <menuitem id="5" @click="onClick" shortcut="F5">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg>
+              <label>幻灯片</label>
+            </menuitem>
+            <menuitem id="6" @click="onClick" shortcut="F11">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 8V5a2 2 0 0 1 2-2h3M3 16v3a2 2 0 0 0 2 2h3M21 8V5a2 2 0 0 0-2-2h-3M21 16v3a2 2 0 0 1-2 2h-3"/></svg>
+              <label>全屏</label>
+            </menuitem>
+            <separator/>
+            <menuitem id="7" @click="onClick" shortcut="Alt+Enter">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 16v-4M12 8h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <label>属性信息</label>
+            </menuitem>
+            <menuitem id="8" @click="onClick" shortcut="Ctrl+W">
+              <svg viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg>
+              <label>关闭</label>
+            </menuitem>
+          </menu>
+        </div>
+      </div>
+
+      <!-- ===== 布局 ===== -->
+      <div v-if="page=='layout'">
+        <label class="h1">{{ $t('layout_title') }}</label>
+        <label class="desc">{{ $t('layout_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('layout_hbox') }}</label>
+        <div class="panel">
+          <div class="row">
+            <button>{{ $t('layout_left') }}</button>
+            <div style="flex: 1"/>
+            <button>{{ $t('layout_center') }}</button>
+            <div style="flex: 1"/>
+            <button>{{ $t('layout_right') }}</button>
+          </div>
+        </div>
+        <label class="h2">{{ $t('layout_pct') }}</label>
+        <div class="panel">
+          <div class="row">
+            <button class="success" style="width: 25%">25%</button>
+            <button style="width: 50%">50%</button>
+            <button class="danger" style="width: 25%">25%</button>
+          </div>
+        </div>
+        <label class="h2">{{ $t('layout_sep') }}</label>
+        <div class="panel">
+          <label class="lbl">A</label>
+          <div class="sep"/>
+          <label class="lbl">B</label>
+          <div class="sep"/>
+          <label class="lbl">C</label>
+        </div>
+      </div>
+
+      <!-- ===== 样式 ===== -->
+      <div v-if="page=='style'">
+        <label class="h1">{{ $t('style_title') }}</label>
+        <label class="desc">{{ $t('style_desc') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('style_dynamic') }}</label>
+        <div class="panel">
+          <label :class="count > 5 ? 'item done' : 'item'">
+            {{ $t('style_fade') }} (count = {{ count }}, {{ count > 5 ? $t('style_faded') : $t('style_normal') }})
+          </label>
+          <button @click="inc">count++</button>
+        </div>
+      </div>
+
+      <!-- ===== 透明工具条 ===== -->
+      <div v-if="page=='overlay'">
+        <label class="h1">{{ $t('overlay_title') }}</label>
+        <label class="desc">{{ $t('overlay_desc') }}</label>
+        <div class="sep"/>
+        <div class="overlay-stage">
+          <gh_img id="overlayGh" class="overlay-gh"/>
+          <div class="overlay-toolbar">
+            <label class="overlay-title">{{ $t('overlay_toolbar') }}</label>
+            <button id="overlaySelect"
+                    :class="overlayMode == 'select' ? 'overlay-tool on' : 'overlay-tool'"
+                    @click="setOverlayMode('select')">{{ $t('overlay_select') }}</button>
+            <button id="overlayCrop"
+                    :class="overlayMode == 'crop' ? 'overlay-tool on' : 'overlay-tool'"
+                    @click="setOverlayMode('crop')">{{ $t('overlay_crop') }}</button>
+            <button id="overlayMark"
+                    :class="overlayMode == 'mark' ? 'overlay-tool on' : 'overlay-tool'"
+                    @click="setOverlayMode('mark')">{{ $t('overlay_mark') }}</button>
+            <div class="overlay-spacer"/>
+            <div class="overlay-meter">
+              <div class="overlay-meter-fill"/>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 动画压力 ===== -->
+      <div v-if="page=='stress'">
+        <label class="h1">动画压力</label>
+        <label class="desc">快速切换状态控件、进度条、滑块和属性 transition，用于观察 frame trace。</label>
+        <div class="sep"/>
+        <div class="panel">
+          <div class="row">
+            <button @click="stressFlip">Flip once</button>
+            <button class="danger" @click="stressBurst">Burst x17</button>
+          </div>
+          <div class="row"><toggle v-model="stressSwitch"/><label class="lbl">Toggle retarget</label></div>
+          <div class="row"><input type="checkbox" v-model="stressCheck"/><label class="lbl">Checkbox retarget</label></div>
+          <div class="row">
+            <input type="radio" name="stressRadio" v-model="stressRadioA"/><label class="lbl">Radio A</label>
+            <input type="radio" name="stressRadio" v-model="stressRadioB"/><label class="lbl">Radio B</label>
+          </div>
+          <label class="lbl">Slider = {{ stressSlider }}</label>
+          <input type="range" min="0" max="100" v-model="stressSlider"/>
+          <label class="lbl">Progress = {{ stressProgress }}%</label>
+          <progressbar min="0" max="100" :value="stressProgress"/>
+          <div class="stress-box"
+               :width="stressWide ? 360 : 120"
+               :height="stressTall ? 88 : 36">
+            transition box
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== i18n ===== -->
+      <div v-if="page=='i18n'">
+        <label class="h1">{{ $t('i18n_title') }}</label>
+        <label class="desc">{{ $t('i18n_desc') }}</label>
+        <div class="sep"/>
+        <div class="panel">
+          <label class="h2">{{ $t('greeting_hello') }}</label>
+          <label class="lbl">{{ $t('greeting_welcome') }}</label>
+          <label class="lbl">current locale = {{ $locale }}</label>
+        </div>
+        <label class="h2">{{ $t('i18n_switch') }}</label>
+        <div class="row">
+          <button @click="setLang('zh')" :class="$locale=='zh' ? '' : 'subtle'">中文</button>
+          <button @click="setLang('en')" :class="$locale=='en' ? '' : 'subtle'">English</button>
+        </div>
+        <label class="lbl">{{ $t('i18n_note') }}</label>
+      </div>
+
+      <!-- ===== 设置 ===== -->
+      <div v-if="page=='settings'">
+        <label class="h1">{{ $t('settings_title') }}</label>
+        <div class="sep"/>
+        <label class="h2">{{ $t('settings_lang') }}</label>
+        <div class="row">
+          <button @click="setLang('zh')" :class="$locale=='zh' ? '' : 'subtle'">中文</button>
+          <button @click="setLang('en')" :class="$locale=='en' ? '' : 'subtle'">English</button>
+        </div>
+        <label class="h2">{{ $t('settings_appearance') }}</label>
+        <div class="row">
+          <toggle id="darkSwitch" v-model="dark"/>
+          <label class="lbl">{{ $t('settings_dark') }}</label>
+        </div>
+        <label class="h2">{{ $t('settings_about') }}</label>
+        <div class="panel">
+          <label class="lbl">Core UI 1.5.x · QuickJS-NG v0.14.0</label>
+          <label class="lbl">Direct2D · DirectWrite · Win32</label>
+          <label class="lbl">{{ $t('settings_about_desc') }}</label>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</template>

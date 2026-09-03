@@ -1,0 +1,604 @@
+<window title="键鼠使用记录" width="1024" height="576" min-width="760" min-height="520" resizable="true" centered="true" frameless="false"/>
+
+<script>
+export default {
+  data() {
+    var now = new Date();
+    var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+    return {
+      activeView: 'overview',
+      trendModeIdx: 0,   // 0=按日 1=按月 2=按年 3=按周
+      stats: null,
+      pauseCmd: 0,
+      autostartCmd: 0,
+      exitCmd: 0,
+      themeCmd: 0,
+      exportCmd: 0,
+      importCmd: 0,
+      clearCmd: 0,
+      linkCmd: 0,      // 关于页开关外部链接（C++ 侧轮询触发 ShellExecuteW）
+      linkUrl: '',     // 待打开的链接（与 linkCmd 配套，须在 data 中初始化才能被 C++ 读到）
+      dark: true,       // 由 C++ 侧同步（持久化主题偏好）
+      compact: false,    // 窗口较窄时数值缩写显示（由 C++ 侧同步）
+      dateStr: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
+      monthStr: now.getFullYear() + '-' + pad(now.getMonth() + 1),
+      yearNum: now.getFullYear(),
+      weekStr: (function () {   // 本周周一（周模式选中的起始日）
+        var w = new Date(now);
+        w.setDate(w.getDate() - ((now.getDay() + 6) % 7));
+        return w.getFullYear() + '-' + pad(w.getMonth() + 1) + '-' + pad(w.getDate());
+      })(),
+      tabs: [
+        { id: 'overview', label: '总览' },
+        { id: 'keys', label: '键盘统计' },
+        { id: 'keyheat', label: '键盘热力图' },
+        { id: 'mouse', label: '鼠标统计' },
+        { id: 'mouseheat', label: '鼠标热力图' },
+        { id: 'about', label: '关于' }
+      ],
+      trendModes: [
+        { id: 'd', label: '日' },
+        { id: 'm', label: '月' },
+        { id: 'y', label: '年' }
+      ],
+      // 日期选择弹窗
+      calOpen: false,
+      calY: now.getFullYear(),
+      calM: now.getMonth() + 1,
+      yearPage: Math.max(2020, now.getFullYear() - 4),
+      calWeekNames: ['一', '二', '三', '四', '五', '六', '日'],
+      // 键盘配列：0=108键 1=87键 2=61键（关于页设置，C++ 持久化）
+      kbLayout: 1
+    };
+  },
+  computed: {
+    paused() { return !!(this.stats && this.stats.paused); },
+    autostart() { return !!(this.stats && this.stats.autostart); },
+    today() { return (this.stats && this.stats.today) || { keys: 0, clicks: 0, motion: 0 }; },
+    total() { return (this.stats && this.stats.total) || { keys: 0, clicks: 0, days: 0, activeSec: 0 }; },
+    mouse() { return (this.stats && this.stats.mouseToday) || { left: 0, right: 0, mid: 0, total: 0 }; },
+    mouseAll() { return (this.stats && this.stats.mouseAll) || { left: 0, right: 0, mid: 0, total: 0, motion: 0 }; },
+    keyTable() { return (this.stats && this.stats.keyTable) || []; },
+    keyMax() {
+      var t = this.keyTable;
+      if (!t || !t.length) return 1;
+      var mx = 0;
+      for (var i = 0; i < t.length; i++) {
+        var v = t[i].c;
+        if (v > mx) mx = v;
+      }
+      return mx > 0 ? mx : 1;
+    },
+    mouseMax() {
+      var m = this.mouseAll;
+      // 仅点击量相互比较（移动采样是不同的量纲、数值通常远超点击，单独成条），
+      // 否则移动数值会把点击条全压扁成“满值”观感，失去对比。
+      return Math.max(m.left || 0, m.right || 0, m.mid || 0, m.total || 0, 1);
+    },
+    mouseTodayMax() {
+      var m = this.mouse;
+      return Math.max(m.left || 0, m.right || 0, m.mid || 0, m.total || 0, 1);
+    },
+    // 日历网格（周一为首列，6 行 × 7 列；d=0 表示空白格）
+    calWeeks() {
+      var y = this.calY, m = this.calM;
+      var first = new Date(y, m - 1, 1);
+      var offset = (first.getDay() + 6) % 7;
+      var dim = new Date(y, m, 0).getDate();
+      var selD = 0;
+      var p = String(this.dateStr).split('-');
+      if (p.length >= 3 && parseInt(p[0]) == y && parseInt(p[1]) == m) selD = parseInt(p[2]);
+      var cells = [];
+      for (var i = 0; i < offset; ++i) cells.push({ d: 0, sel: false });
+      for (var d = 1; d <= dim; ++d) cells.push({ d: d, sel: d == selD });
+      while (cells.length % 7 != 0) cells.push({ d: 0, sel: false });
+      var rows = [];
+      for (var i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+      return rows;
+    },
+    // 月选择网格（3 行 × 4 列）
+    monthRows() {
+      var pm = String(this.monthStr).split('-');
+      var selY = parseInt(pm[0]) || 0, selM = parseInt(pm[1]) || 0;
+      var rows = [];
+      for (var r = 0; r < 3; ++r) {
+        var row = [];
+        for (var c = 0; c < 4; ++c) {
+          var m = r * 4 + c + 1;
+          row.push({ m: m, sel: this.calY == selY && m == selM });
+        }
+        rows.push(row);
+      }
+      return rows;
+    },
+    // 年选择网格（3 行 × 4 列，共 12 年）
+    yearRows() {
+      var selY = parseInt(this.yearNum) || 0;
+      var rows = [];
+      for (var r = 0; r < 3; ++r) {
+        var row = [];
+        for (var c = 0; c < 4; ++c) {
+          var y = this.yearPage + r * 4 + c;
+          row.push({ y: y, sel: y == selY });
+        }
+        rows.push(row);
+      }
+      return rows;
+    }
+  },
+  methods: {
+    go(v) { this.activeView = v; },
+    setMode(i) { this.trendModeIdx = i; },
+    // ---- 日期便携步进 ----
+    pad2(n) { return (n < 10 ? '0' : '') + n; },
+    // 周一（周模式选中范围的起始日）
+    mondayYMD(y, m, d) {
+      var dt = new Date(y, m - 1, d);
+      dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+      return dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1) + '-' + this.pad2(dt.getDate());
+    },
+    stepDate(mode, n) {   // mode: 0=日 ±n天, 3=周 ±n天(±7)
+      var target = (mode == 3) ? this.weekStr : this.dateStr;
+      var p = String(target || '').split('-');
+      var dt = new Date(parseInt(p[0]) || 2000, (parseInt(p[1]) || 1) - 1, (parseInt(p[2]) || 1) + n);
+      var s = dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1) + '-' + this.pad2(dt.getDate());
+      if (mode == 3) this.weekStr = s; else this.dateStr = s;
+    },
+    stepMonth(n) {
+      var p = String(this.monthStr || '').split('-');
+      var dt = new Date(parseInt(p[0]) || 2000, (parseInt(p[1]) || 1) - 1 + n, 1);
+      this.monthStr = dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1);
+    },
+    stepYear(n) {
+      var y = (parseInt(this.yearNum) || 2000) + n;
+      if (y < 2020) y = 2020;
+      this.yearNum = y;
+    },
+    togglePause() { this.pauseCmd = this.pauseCmd + 1; },
+    toggleAutostart() { this.autostartCmd = this.autostartCmd + 1; },
+    toggleTheme() { this.themeCmd = this.themeCmd + 1; },
+    requestExit() { this.exitCmd = this.exitCmd + 1; },
+    exportData() { this.exportCmd = this.exportCmd + 1; },
+    importData() { this.importCmd = this.importCmd + 1; },
+    clearData() { this.clearCmd = this.clearCmd + 1; },
+      openLink(u) { this.linkUrl = u; this.linkCmd++; },
+    fmt(v) {
+      if (v == null || v === '') return '0';
+      // 默认显示准确值；窗口过窄（compact 由 C++ resize 回调同步）时才缩写
+      if (!this.compact) return String(v);
+      if (v >= 1000000000) return (v / 1000000000).toFixed(1) + 'B';
+      if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+      if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
+      return String(v);
+    },
+    fmtMin(sec) {
+      // 累计活跃时间显示为“一位小数小时”格式，单位缩写为 h
+      var h = (sec || 0) / 3600;
+      return h.toFixed(1) + 'h';
+    },
+    // 计数条宽度百分比：钳制到 [0,100]，并保证有值的最短可见条，避免除零/满值溢出
+    pct(c, m) {
+      var mx = (m && m > 0) ? m : 1;
+      var p = Math.round(c / mx * 100);
+      if (!isFinite(p) || p < 0) p = 0;
+      if (p > 100) p = 100;
+      if (p > 0 && p < 2) p = 2;
+      return p;
+    },
+    // ---- 日期选择弹窗 ----
+    openCal() {
+      var now = new Date();
+      if (this.trendModeIdx == 0) {
+        var p = String(this.dateStr).split('-');
+        this.calY = parseInt(p[0]) || now.getFullYear();
+        this.calM = parseInt(p[1]) || (now.getMonth() + 1);
+      } else if (this.trendModeIdx == 3) {   // 周：以周一所在月份打开月历
+        var p = String(this.weekStr).split('-');
+        this.calY = parseInt(p[0]) || now.getFullYear();
+        this.calM = parseInt(p[1]) || (now.getMonth() + 1);
+      } else if (this.trendModeIdx == 1) {
+        var p = String(this.monthStr).split('-');
+        this.calY = parseInt(p[0]) || now.getFullYear();
+      } else {
+        this.yearPage = Math.max(2020, (parseInt(this.yearNum) || now.getFullYear()) - 4);
+      }
+      this.calOpen = true;
+    },
+    closeCal() { this.calOpen = false; },
+    calShift(n) { // n = 月数（±1 月，±12 年）
+      var m = this.calM + n, y = this.calY;
+      while (m > 12) { m -= 12; y += 1; }
+      while (m < 1) { m += 12; y -= 1; }
+      this.calY = y;
+      this.calM = m;
+    },
+    shiftYears(n) { this.yearPage = Math.max(2020, this.yearPage + n); },
+    pickDay(d) {
+      if (d <= 0) return;
+      if (this.trendModeIdx == 3) {
+        this.weekStr = this.mondayYMD(this.calY, this.calM, d);   // 周模式：选中日所在周
+      } else {
+        this.dateStr = this.calY + '-' + this.pad2(this.calM) + '-' + this.pad2(d);
+      }
+      this.closeCal();
+    },
+    pickMonth(m) {
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      this.monthStr = this.calY + '-' + pad(m);
+      this.closeCal();
+    },
+    pickYear(y) {
+      this.yearNum = y;
+      this.closeCal();
+    },
+    onModalBgClick() { this.closeCal(); },
+    onCardClick() { },
+    onModalKeydown() { this.closeCal(); }
+  }
+}
+</script>
+
+<style>
+  /* 颜色统一走库主题令牌（var(--...)），深浅主题切换由 C++ 侧 ui_theme_set_mode 驱动 */
+  .app { width: 100%; height: 100%; flex-direction: column; background: var(--window-bg); }
+
+  .nav { flex-direction: row; align-items: center; gap: 4px;
+         padding: 0 14px; height: 52px; background: var(--card-bg);
+         box-shadow: 0 1px 0 var(--border-subtle); }
+  .navtab { padding: 6px 14px; border-radius: 8px; color: var(--fg-2);
+            font-size: 13px; cursor: pointer; background: transparent; }
+  .navtab:hover { background: var(--bg-3); }
+  .navtab.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+  .spacer { flex-grow: 1; }
+  /* 右侧三按钮：两种状态均以实色区分（在深浅主题下都保持可读对比度） */
+  .pill { padding: 6px 12px; border-radius: 16px; font-size: 12px;
+          cursor: pointer; white-space: nowrap; background: var(--bg-3); color: var(--fg-2); }
+  .st-run { background: #1f9d55; color: #ffffff; }        /* 采集中：绿 */
+  .st-paused { background: #d97706; color: #ffffff; }     /* 已暂停：橙 */
+  .st-auto-on { background: var(--accent); color: var(--fg-on-accent); }   /* 自启开：主题蓝 */
+  .st-auto-off { background: var(--bg-3); color: var(--fg-3); }            /* 自启关：弱化 */
+  .st-theme-light { background: #f59e0b; color: #ffffff; } /* 当前浅色（点击切深）：琥珀 */
+  .st-theme-dark { background: #475569; color: #f1f5f9; } /* 当前深色（点击切浅）：石板 */
+
+  .content { flex-grow: 1; width: 100%; height: 0; overflow: hidden; }
+  .view { width: 100%; height: 100%; padding: 20px; gap: 16px; flex-direction: column; overflow: hidden; }
+
+  /* 总览：7 项 KPI 分两行（4 + 3，末尾占位保持等宽） */
+  .kpiwrap { flex-direction: column; gap: 10px; }
+  .kpis { flex-direction: row; gap: 10px; }
+  .kpi2 { flex-grow: 1; background: var(--card-bg); border-radius: 8px;
+          padding: 10px 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+          flex-direction: row; align-items: center; justify-content: space-between; }
+  .kpi2 .t { font-size: 12px; color: var(--fg-3); }
+  .kpi2 .v { font-size: 17px; font-weight: 600; color: #4d9fff; }
+  .kpi-fill { flex-grow: 1; }
+
+  .section { background: var(--card-bg); border-radius: 10px; padding: 16px 18px;
+             box-shadow: 0 1px 2px rgba(0,0,0,0.04); flex-direction: column; overflow: hidden; }
+  .flush { flex: 1 1 auto; min-height: 0; height: 0; }
+  .section { contain: layout style; }
+
+  .kbd-table { width: 100%; flex-direction: column; gap: 2px; }
+  .kt-row { flex-direction: row; align-items: center; padding: 8px 10px;
+            border-radius: 6px; }
+  .kt-row:hover { background: var(--bg-3); }
+  .kt-label { font-size: 13px; color: var(--fg); width: 140px; }
+  /* 原生 progressbar：内部按 value/(max-min) 比例填充，:value 绑定真实反应式更新 */
+  .kt-bar { flex-grow: 1; height: 8px; }
+  .kt-count { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); }
+
+  .mouse-grid { flex-direction: column; gap: 8px; }
+  .mouse-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 8px 10px;
+               border-radius: 6px; }
+  .mouse-row:hover { background: var(--bg-3); }
+  .mouse-name { font-size: 13px; color: var(--fg); width: 140px; }
+  .mouse-bar { flex-grow: 1; height: 8px; }
+  .mouse-val { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); font-weight: 600; }
+  .mouse-h { font-size: 12px; color: var(--fg-3); margin-top: 6px; }
+
+  .canvas { flex-grow: 1; width: 100%; min-height: 0; }
+  .scroll-fill { flex: 1 1 auto; width: 100%; min-height: 0; height: 0; overflow-y: auto; overflow-x: hidden; }
+
+  .modes { flex-direction: row; gap: 6px; }
+  .mode { padding: 5px 12px; border-radius: 7px; font-size: 12px; color: var(--fg-2);
+          cursor: pointer; background: var(--bg-3); }
+  .mode.on { background: var(--accent); color: var(--fg-on-accent); }
+  .ctrlbar { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+  .tinput { background: var(--input-bg); border: 1px solid var(--input-border);
+            border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--fg);
+            width: 118px; }
+  .calbtn { padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+            background: var(--bg-3); color: var(--fg-2); }
+  /* 日期便携步进调整：文本框两侧 ‹ › */
+  .datebox { flex-direction: row; align-items: center; gap: 4px; }
+  .stepper { width: 24px; height: 26px; border-radius: 6px; font-size: 14px; cursor: pointer;
+             background: var(--bg-3); color: var(--fg-2); text-align: center;
+             display: flex; align-items: center; justify-content: center; padding: 0; }
+  .stepper:hover { background: var(--bg-2); color: var(--fg); }
+
+  /* 日期选择弹窗（覆盖全窗口，点击遮罩关闭） */
+  .modal { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+           background: rgba(0,0,0,0.35); flex-direction: row;
+           justify-content: center; align-items: center; }
+  .calcard { background: var(--card-bg); border-radius: 10px; padding: 14px;
+             box-shadow: 0 10px 30px rgba(0,0,0,0.30); }
+  .calhead { flex-direction: row; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .caltitle { flex-grow: 1; text-align: center; font-size: 13px; color: var(--fg);
+              font-weight: 600; }
+  .navarrow { width: 28px; height: 28px; border-radius: 6px; font-size: 14px; cursor: pointer;
+              background: var(--bg-3); color: var(--fg-2); text-align: center;
+              display: flex; align-items: center; justify-content: center; padding: 0; }
+  .cal-row { flex-direction: row; gap: 4px; margin-bottom: 4px; }
+  .cal-wd { width: 34px; text-align: center; font-size: 11px; color: var(--fg-3); }
+  .cal-day { width: 34px; height: 30px; text-align: center; font-size: 12px;
+             color: var(--fg); background: var(--bg-3); border-radius: 6px; cursor: pointer; }
+  .cal-day.blank { background: transparent; cursor: default; }
+  .cal-day.sel { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+  .cal-cell { width: 64px; height: 32px; text-align: center; font-size: 12px;
+              color: var(--fg); background: var(--bg-3); border-radius: 6px; cursor: pointer; }
+  .cal-cell.sel { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+
+  /* 关于页 */
+  .ab-title { font-size: 18px; font-weight: 600; color: var(--fg); margin-bottom: 8px; }
+  .ab-h2 { font-size: 13px; font-weight: 600; color: var(--fg); margin-bottom: 6px; margin-top: 12px; }
+  .ab-line { font-size: 12px; color: var(--fg-2); margin-bottom: 3px; line-height: 1.5; }
+  .ab-btns { flex-direction: row; gap: 10px; margin: 4px 0 8px 0; }
+  /* 固定显式宽度：避免任何测量上下文缺失导致的"滚动后按钮变窄"，无论是否
+   * 重跑布局都保持稳定几何（开机自启按钮文本最长）。这里将宽度整体收窄。 */
+  .ab-btn { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+          background: var(--accent); color: var(--fg-on-accent);
+          flex: none; white-space: nowrap; width: 112px; }
+  .ab-btn.ghost { background: var(--bg-3); color: var(--fg-2); }
+  .ab-btn.danger { background: #b42318; color: #ffffff; }
+  /* 数据管理三按钮文本较短，单独收窄到 80px */
+  .ab-btns.data .ab-btn { width: 80px; padding: 8px 8px; }
+  /* 配列切换按钮（108/87/61） */
+  .laybtn { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
+            background: var(--bg-3); color: var(--fg-2);
+            flex: none; white-space: nowrap; width: 68px; }
+  .laybtn.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+  /* 关于页外部链接按钮（作者 / 项目 / 参考引用）。文字色取与总览数据一致的浅蓝，
+   * 在暗色下保持浅色可读（深蓝会看不清）。与上方设置按钮(.ab-btn)采用同一套
+   * “固定显式宽度”设计逻辑：宽度写死，避免滚动后/重新布局时测宽漂移导致按钮大小变化。 */
+  .ab-link { padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+            background: var(--bg-3); color: #4d9fff;
+            flex: none; white-space: nowrap; width: 118px; text-align: center; }
+  .ab-link:hover { background: var(--accent); color: var(--fg-on-accent); }
+  .ab-section { background: var(--bg-2); border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+</style>
+
+<template>
+  <div class="app">
+    <div class="nav">
+      <button v-for="(t, i) in tabs" :key="t.id"
+              :class="activeView == t.id ? 'navtab on' : 'navtab'"
+              @click="go(t.id)">{{ t.label }}</button>
+      <div class="spacer"></div>
+      <button class="pill" :class="paused ? 'st-paused' : 'st-run'" @click="togglePause">
+        {{ paused ? '已暂停' : '采集中' }}
+      </button>
+      <button class="pill" :class="dark ? 'st-theme-dark' : 'st-theme-light'" @click="toggleTheme">
+        {{ dark ? '☀' : '🌙' }}
+      </button>
+    </div>
+
+    <div class="content">
+      <!-- 总览：7 项 KPI 分两行 + 历史趋势 -->
+      <div v-if="activeView == 'overview'" class="view">
+        <div class="kpiwrap">
+          <div class="kpis">
+            <div class="kpi2"><label class="t">今日按键</label><label class="v">{{ fmt(today.keys) }}</label></div>
+            <div class="kpi2"><label class="t">今日点击</label><label class="v">{{ fmt(today.clicks) }}</label></div>
+            <div class="kpi2"><label class="t">今日移动</label><label class="v">{{ fmt(today.motion) }}</label></div>
+            <div class="kpi2"><label class="t">累计按键</label><label class="v">{{ fmt(total.keys) }}</label></div>
+          </div>
+          <div class="kpis">
+            <div class="kpi2"><label class="t">累计点击</label><label class="v">{{ fmt(total.clicks) }}</label></div>
+            <div class="kpi2"><label class="t">记录天数</label><label class="v">{{ total.days }}</label></div>
+            <div class="kpi2"><label class="t">累计活跃</label><label class="v">{{ fmtMin(total.activeSec) }}</label></div>
+            <div class="kpi-fill"></div>
+          </div>
+        </div>
+        <div class="section flush">
+          <div class="ctrlbar">
+            <div class="modes">
+              <button id="mode_d" :class="trendModeIdx == 0 ? 'mode on' : 'mode'" @click="setMode(0)">日</button>
+              <button id="mode_w" :class="trendModeIdx == 3 ? 'mode on' : 'mode'" @click="setMode(3)">周</button>
+              <button id="mode_m" :class="trendModeIdx == 1 ? 'mode on' : 'mode'" @click="setMode(1)">月</button>
+              <button id="mode_y" :class="trendModeIdx == 2 ? 'mode on' : 'mode'" @click="setMode(2)">年</button>
+            </div>
+            <div class="spacer"></div>
+            <!-- 日：文本框 + 便携步进按钮 -->
+            <div class="datebox" v-if="trendModeIdx == 0">
+              <button class="stepper" @click="stepDate(0, -1)">‹</button>
+              <input id="date_input" type="date" class="tinput" v-model="dateStr"/>
+              <button class="stepper" @click="stepDate(0, 1)">›</button>
+            </div>
+            <!-- 周：文本框 + 便携步进按钮（步进 ±7 天） -->
+            <div class="datebox" v-if="trendModeIdx == 3">
+              <button class="stepper" @click="stepDate(3, -7)">‹</button>
+              <input id="week_input" type="date" class="tinput" v-model="weekStr"/>
+              <button class="stepper" @click="stepDate(3, 7)">›</button>
+            </div>
+            <!-- 月：文本框 + 便携步进按钮 -->
+            <div class="datebox" v-if="trendModeIdx == 1">
+              <button class="stepper" @click="stepMonth(-1)">‹</button>
+              <input id="month_input" type="month" class="tinput" v-model="monthStr"/>
+              <button class="stepper" @click="stepMonth(1)">›</button>
+            </div>
+            <!-- 年：文本框 + 便携步进按钮 -->
+            <div class="datebox" v-if="trendModeIdx == 2">
+              <button class="stepper" @click="stepYear(-1)">‹</button>
+              <input id="year_input" type="number" class="tinput" v-model="yearNum"
+                     min="2020" max="9999"/>
+              <button class="stepper" @click="stepYear(1)">›</button>
+            </div>
+            <button id="calbtn" class="calbtn" @click="openCal">📅</button>
+          </div>
+          <custom id="trend_canvas" class="canvas"></custom>
+        </div>
+      </div>
+
+      <!-- 键盘统计（全部累计） -->
+      <div v-if="activeView == 'keys'" class="view">
+        <div class="section flush">
+          <ScrollView class="scroll-fill">
+            <div class="kbd-table">
+              <div v-for="(r, i) in keyTable" :key="i" class="kt-row">
+                <label class="kt-label">{{ r.l }}</label>
+                <progressbar class="kt-bar" min="0" max="100" :value="pct(r.c, keyMax)"></progressbar>
+                <label class="kt-count">{{ fmt(r.c) }}</label>
+              </div>
+            </div>
+          </ScrollView>
+        </div>
+      </div>
+
+      <!-- 键盘热力图（点击键位可隐藏/恢复热度显示，悬停显示次数） -->
+      <div v-if="activeView == 'keyheat'" class="view">
+        <div class="section flush">
+          <custom id="keyheat_canvas" class="canvas"></custom>
+        </div>
+      </div>
+
+      <!-- 鼠标统计（累计 + 今日） -->
+      <div v-if="activeView == 'mouse'" class="view">
+        <div class="section flush">
+          <ScrollView class="scroll-fill">
+            <div class="mouse-grid">
+              <label class="mouse-h">全部累计</label>
+              <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.left, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.left) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.right, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.right) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.mid, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.mid) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.total, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.total) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">移动采样</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.motion, mouseAll.motion)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.motion) }}</label></div>
+              <label class="mouse-h">今日</label>
+              <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.left, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.left) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.right, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.right) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.mid, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.mid) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.total, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.total) }}</label></div>
+              <div class="mouse-row"><label class="mouse-name">移动采样</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(today.motion, today.motion)"></progressbar><label class="mouse-val">{{ fmt(today.motion) }}</label></div>
+            </div>
+          </ScrollView>
+        </div>
+      </div>
+
+      <!-- 鼠标热力图（悬停显示次数） -->
+      <div v-if="activeView == 'mouseheat'" class="view">
+        <div class="section flush">
+          <custom id="mouseheat_canvas" class="canvas"></custom>
+        </div>
+      </div>
+
+      <!-- 关于 -->
+      <div v-if="activeView == 'about'" class="view">
+        <div class="section flush">
+          <ScrollView class="scroll-fill">
+            <div class="mouse-grid">
+            <label class="ab-title">键鼠使用记录 v0.1.0</label>
+            <label class="ab-line">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
+
+            <label class="ab-h2" style="margin-top: 16px;">设置</label>
+            <div class="ab-section">
+              <div class="ab-btns" style="margin-top: 0;">
+                <button class="ab-btn" :class="autostart ? '' : 'ghost'" @click="toggleAutostart()">
+                  {{ autostart ? '开机自启：开' : '开机自启：关' }}
+                </button>
+              </div>
+              <label class="ab-line">开机自动启动本程序（需要管理员权限的安装目录可能失效）。</label>
+              <div class="ab-btns">
+                <button class="laybtn" :class="kbLayout == 0 ? 'on' : ''" @click="kbLayout = 0">108 键</button>
+                <button class="laybtn" :class="kbLayout == 1 ? 'on' : ''" @click="kbLayout = 1">87 键</button>
+                <button class="laybtn" :class="kbLayout == 2 ? 'on' : ''" @click="kbLayout = 2">61 键</button>
+              </div>
+              <label class="ab-line">键盘热力图配列：108 全尺寸 / 87 无小键盘 / 61 紧凑（无功能行）。</label>
+            </div>
+
+            <label class="ab-h2">数据管理</label>
+            <div class="ab-section">
+              <div class="ab-btns data" style="margin-top: 0;">
+                <button class="ab-btn" @click="exportData">导出数据</button>
+                <button class="ab-btn ghost" @click="importData">导入数据</button>
+                <button class="ab-btn danger" @click="clearData">清除数据</button>
+              </div>
+              <label class="ab-line">导出当前全部数据为备份文件；导入将覆盖当前全部数据；清除将清空本机全部统计记录。</label>
+            </div>
+
+            <label class="ab-h2">隐私与安全</label>
+            <div class="ab-section">
+              <label class="ab-line" style="margin-top: 0;">· 所有数据仅保存在本机（%APPDATA%\KeyMouseTracker），不联网、不上传、无遥测。</label>
+              <label class="ab-line">· 仅统计按键 / 点击次数，不记录按键内容与输入序列。</label>
+              <label class="ab-line">· 数据文件可随时导出备份或删除。</label>
+            </div>
+
+            <label class="ab-h2">开发信息</label>
+            <div class="ab-section">
+              <label class="ab-line" style="margin-top: 0;">作者：Taumata</label>
+              <div class="ab-btns" style="margin-top: 6px;">
+                <button class="ab-link" @click="openLink('https://github.com/Taumata-wwq/KeyMouseTracker')">项目 · GitHub</button>
+              </div>
+              <label class="ab-line">技术栈：C++17 · core-ui（Direct2D / Direct3D）· QuickJS-NG · lunasvg</label>
+              <label class="ab-line">参考引用：</label>
+              <div class="ab-btns" style="margin-top: 4px;">
+                <button class="ab-link" @click="openLink('https://ghboke.github.io/core-ui/')">core-ui</button>
+                <button class="ab-link" @click="openLink('https://github.com/quickjs-ng/quickjs')">QuickJS-NG</button>
+                <button class="ab-link" @click="openLink('https://github.com/sammycage/lunasvg')">lunasvg</button>
+                <button class="ab-link" @click="openLink('https://howardhinnant.github.io/date_algorithms.html')">Hinnant 日期</button>
+              </div>
+              <label class="ab-line" style="margin-bottom: 0;">本软件基于 MIT 开源协议发布，代码见上方项目地址。</label>
+            </div>
+            </div>
+          </ScrollView>
+        </div>
+      </div>
+    </div>
+
+    <!-- 日期选择弹窗（按日：月历；按月：年 + 12 月；按年：12 年分页） -->
+    <div v-if="calOpen" class="modal" @click="onModalBgClick" @keydown="onModalKeydown">
+      <div class="calcard" @click="onCardClick">
+        <div v-if="trendModeIdx == 0 || trendModeIdx == 3">
+          <div class="calhead">
+            <button class="navarrow" @click="calShift(-12)">«</button>
+            <button class="navarrow" @click="calShift(-1)">‹</button>
+            <label class="caltitle">{{ calY }} 年 {{ calM }} 月</label>
+            <button class="navarrow" @click="calShift(1)">›</button>
+            <button class="navarrow" @click="calShift(12)">»</button>
+          </div>
+          <div class="cal-row">
+            <label v-for="(w, i) in calWeekNames" :key="i" class="cal-wd">{{ w }}</label>
+          </div>
+          <div v-for="(wk, wi) in calWeeks" :key="wi" class="cal-row">
+            <button v-for="(c, ci) in wk" :key="ci"
+                    :class="c.sel ? 'cal-day sel' : (c.d > 0 ? 'cal-day' : 'cal-day blank')"
+                    @click="pickDay(c.d)">{{ c.d > 0 ? c.d : '' }}</button>
+          </div>
+        </div>
+        <div v-if="trendModeIdx == 1">
+          <div class="calhead">
+            <button class="navarrow" @click="calShift(-12)">«</button>
+            <label class="caltitle">{{ calY }} 年</label>
+            <button class="navarrow" @click="calShift(12)">»</button>
+          </div>
+          <div v-for="(r, ri) in monthRows" :key="ri" class="cal-row">
+            <button v-for="(mm, mi) in r" :key="mi"
+                    :class="mm.sel ? 'cal-cell sel' : 'cal-cell'"
+                    @click="pickMonth(mm.m)">{{ mm.m }}月</button>
+          </div>
+        </div>
+        <div v-if="trendModeIdx == 2">
+          <div class="calhead">
+            <button class="navarrow" @click="shiftYears(-12)">«</button>
+            <label class="caltitle">{{ yearPage }} – {{ yearPage + 11 }}</label>
+            <button class="navarrow" @click="shiftYears(12)">»</button>
+          </div>
+          <div v-for="(r, ri) in yearRows" :key="ri" class="cal-row">
+            <button v-for="(yy, yi) in r" :key="yi"
+                    :class="yy.sel ? 'cal-cell sel' : 'cal-cell'"
+                    @click="pickYear(yy.y)">{{ yy.y }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
