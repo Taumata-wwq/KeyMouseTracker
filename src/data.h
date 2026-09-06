@@ -18,20 +18,20 @@ struct DayData {
     uint32_t mLeft = 0, mMid = 0, mRight = 0;
     uint32_t activeSec = 0;
     uint64_t motion = 0;
-    uint64_t distPx = 0;   // 鼠标位移（像素累计，KMT5 新增；KMT4 无此字段为 0）
-    // M2（KMT5 v6）：活跃/空闲细分 + 长会话
+    uint64_t distPx = 0;   // 鼠标位移（像素累计）
+    // 活跃/空闲细分 + 长会话
     uint32_t idleSec = 0;         // 今日空闲总秒（连续无活动 ≥ 空闲阈值 5 分钟才计入）
     uint32_t maxSessionSec = 0;   // 今日最长连续活跃段（秒）
     uint16_t sessionCount = 0;    // 今日活跃段次数
     // 分钟级操作强度（APM）：分钟序号(0..1439) → 该分钟键+点击次数（稀疏，仅存非零）
     std::map<uint16_t, uint16_t> minuteActivity;
-    std::map<uint16_t, uint16_t> keyMinuteActivity;   // v9：分钟级按键
-    std::map<uint16_t, uint16_t> clickMinuteActivity; // v9：分钟级点击
+    std::map<uint16_t, uint16_t> keyMinuteActivity;   // 分钟级按键
+    std::map<uint16_t, uint16_t> clickMinuteActivity; // 分钟级点击
     // 每小时每键计数：复合键 = hour*256 + vk → 次数（CSV 键×时间矩阵数据源）
     std::map<uint32_t, uint32_t> keyHourly;
     std::map<uint8_t, uint32_t> keyCounts;
     std::map<uint32_t, uint32_t> mouseHeat;
-    // v7：前台活跃应用统计（仅 optAppTrack 开启时记录）exe 名 → 按键+点击次数
+    // 前台活跃应用统计（仅 optAppTrack 开启时记录）exe 名 → 按键+点击次数
     std::map<std::string, uint64_t> appCounts;
     uint64_t hourlyKeys[24] = {0};
     uint64_t hourlyClicks[24] = {0};
@@ -44,9 +44,9 @@ struct AppData {
     bool paused = false;
     bool darkTheme = false;
     uint8_t kbLayout = 0;
-    bool optAppTrack = false;   // v7：前台活动应用统计（隐私默认关）
-    uint8_t idleMin = 5;        // v8：空闲阈值（分钟，可配置）
-    std::set<std::string> excludeApps;  // v8：前台应用排除列表（exe 名）
+    bool optAppTrack = false;   // 前台活动应用统计（隐私默认关）
+    uint8_t idleMin = 5;        // 空闲阈值（分钟，可配置）
+    std::set<std::string> excludeApps;  // 前台应用排除列表（exe 名）
     uint32_t lastActivity = 0;
     bool dirty = false;
     bool needsRefresh = false;
@@ -87,3 +87,8 @@ struct StorageInfo { uint64_t bytes = 0; int days = 0; int first = 0; int last =
 StorageInfo storageInfo();
 
 int  heatIndexFromScreen(LONG x, LONG y);
+
+// 按键虚拟键码 → 可读名称（写入调用方 buf，返回同指针；UTF-8）。UI 与导出共用
+const char* vkLabel(uint8_t vk, char buf[32]);
+// JSON 字符串转义（UTF-8 字节流）：引号/反斜杠/控制字符（<0x20 → \uXXXX）
+std::string jsonEscape(const char* s);

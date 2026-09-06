@@ -2,7 +2,6 @@
 #include "data.h"
 #include <shlobj.h>
 #include <cstdio>
-#include <cstring>
 
 const wchar_t* kAppName = L"KeyMouseTracker";
 
@@ -146,6 +145,57 @@ int heatIndexFromScreen(LONG x, LONG y) {
     return (int)(gy * kHeatW + gx);
 }
 
+const char* vkLabel(uint8_t vk, char buf[32]) {
+    if (vk >= 'A' && vk <= 'Z') { buf[0] = vk; buf[1] = 0; return buf; }
+    if (vk >= '0' && vk <= '9') { buf[0] = vk; buf[1] = 0; return buf; }
+    switch (vk) {
+        case VK_SPACE: return "Space"; case VK_BACK: return "Back"; case VK_TAB: return "Tab";
+        case VK_RETURN: return "Enter"; case VK_CAPITAL: return "Caps"; case VK_SHIFT: return "Shift";
+        case VK_LSHIFT: return "LShift"; case VK_RSHIFT: return "RShift";
+        case VK_CONTROL: return "Ctrl"; case VK_LCONTROL: return "LCtrl"; case VK_RCONTROL: return "RCtrl";
+        case VK_MENU: return "Alt"; case VK_LMENU: return "LAlt"; case VK_RMENU: return "RAlt";
+        case VK_ESCAPE: return "Esc"; case VK_DELETE: return "Del"; case VK_INSERT: return "Ins";
+        case VK_HOME: return "Home"; case VK_END: return "End"; case VK_PRIOR: return "PgUp";
+        case VK_NEXT: return "PgDn";
+        case VK_LEFT: return "\xe2\x86\x90"; case VK_RIGHT: return "\xe2\x86\x92";
+        case VK_UP: return "\xe2\x86\x91"; case VK_DOWN: return "\xe2\x86\x93";
+        case VK_LWIN: return "Win"; case VK_RWIN: return "Win"; case VK_APPS: return "Menu";
+        case VK_NUMLOCK: return "Num";
+        case VK_MULTIPLY: return "N*"; case VK_ADD: return "N+";
+        case VK_SUBTRACT: return "N-"; case VK_DECIMAL: return "N."; case VK_DIVIDE: return "N/";
+        case VK_F1: return "F1"; case VK_F2: return "F2"; case VK_F3: return "F3"; case VK_F4: return "F4";
+        case VK_F5: return "F5"; case VK_F6: return "F6"; case VK_F7: return "F7"; case VK_F8: return "F8";
+        case VK_F9: return "F9"; case VK_F10: return "F10"; case VK_F11: return "F11"; case VK_F12: return "F12";
+        case 0xBA: return ";"; case 0xBB: return "="; case 0xBC: return ","; case 0xBD: return "-";
+        case 0xBE: return "."; case 0xBF: return "/"; case 0xC0: return "`"; case 0xDB: return "[";
+        case 0xDC: return "\\"; case 0xDD: return "]"; case 0xDE: return "'";
+        default:
+            if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) { snprintf(buf, 32, "N%d", vk - VK_NUMPAD0); return buf; }
+            snprintf(buf, 32, "%d", vk); return buf;
+    }
+}
+
+// JSON 字符串转义（UTF-8 字节流）：<0x20 的控制字符 → \uXXXX，引号/反斜杠转义
+std::string jsonEscape(const char* s) {
+    std::string r;
+    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
+        unsigned char c = *p;
+        switch (c) {
+            case '"': r += "\\\""; break;
+            case '\\': r += "\\\\"; break;
+            case '\b': r += "\\b"; break;
+            case '\f': r += "\\f"; break;
+            case '\n': r += "\\n"; break;
+            case '\r': r += "\\r"; break;
+            case '\t': r += "\\t"; break;
+            default:
+                if (c < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", c); r += b; }
+                else r += (char)c;
+        }
+    }
+    return r;
+}
+
 void recordClick(uint8_t btn, LONG x, LONG y) {
     if (app().paused) return;
     refreshClock();
@@ -169,7 +219,10 @@ void recordMove() {
     ensureCurDay();
     DayData& t = app().days[app().cur];
     t.motion++;
-    if ((t.motion & 0x1F) == 0) { app().lastActivity = GetTickCount(); app().needsRefresh = true; }
+    // 每次采样都请求 UI 刷新：移动数据即时更新；推送成本已由 main 侧差分
+    // 更新（pushStats 仅推送变化字段）消化，无需再降频。
+    app().lastActivity = GetTickCount();
+    app().needsRefresh = true;
 }
 
 void recordMoveDist(uint64_t px) {
@@ -191,7 +244,7 @@ uint64_t distToCm(uint64_t px) {
     return (uint64_t)((double)px * 2.54 / dpi + 0.5);
 }
 
-// 重建累计缓存（增量维护的前提是初始为全量汇总）。前置声明供 eraseRange 使用
+// 前置声明（eraseRange 使用）
 static void rebuildCumulative();
 
 // 历史移动里程折算：KMT4 / 旧 KMT5 无 distPx 字段（旧数据折算丢失），按“每次

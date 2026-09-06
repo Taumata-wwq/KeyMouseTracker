@@ -37,13 +37,19 @@ static const UINT_PTR kSubclassId = 0x4B4D54; // "KMT"
 // 全部重活推迟到 WM_EXITSIZEMOVE 一次性完成，保证拖拽全程不卡顿。
 static bool g_inResizeMode = false;
 
+// UI 统计刷新采用局部推送：stats 拆为独立顶层键，pushStats 仅推送内容变化的键
+// （快照 diff），避免全量替换触发所有绑定重求值；窗口隐藏时跳过刷新，显示后补刷。
+static DWORD g_lastPushTick = 0;
+static const DWORD kPushMinMs = 16;   // 60 帧节流：TI_REFRESH 每 16ms 检查一次
+
 // pushStats：把当前统计重建为 JSON 并推送到 .uix；定义在下方，SubclassProc 需提前可见
 static void pushStats();
 
 // 定时器
-enum { TI_SAMPLE = 1, TI_SAVE = 2, TI_ACTIVE = 3, TI_POLL = 4 };
+enum { TI_SAMPLE = 1, TI_SAVE = 2, TI_ACTIVE = 3, TI_POLL = 4, TI_REFRESH = 5 };
 static const UINT kSampleMs = 33;
 static const UINT kSaveMs = 30000;
+static const UINT kRefreshMs = 16;   // UI 刷新轮询：60 帧
 
 static int g_lastExclCmd = 0;
 static int g_lastRemoveExclCmd = 0;
@@ -170,6 +176,7 @@ static void ShowMainWindow() {
     } else {
         ui_window_show_immediate(g_win);
     }
+    app().needsRefresh = true;   // 恢复显示时置位，由 TI_POLL 补刷隐藏期间累计的数据
 }
 
 static UINT ShowTrayMenu() {
@@ -281,42 +288,6 @@ static void OnWindowResize(UiWindow, int w, int, void*) {
     }
 }
 
-static const char* vkLabel(uint8_t vk, char buf[32]) {
-    if (vk >= 'A' && vk <= 'Z') { buf[0] = vk; buf[1] = 0; return buf; }
-    if (vk >= '0' && vk <= '9') { buf[0] = vk; buf[1] = 0; return buf; }
-    switch (vk) {
-        case VK_SPACE: return "Space"; case VK_BACK: return "Back"; case VK_TAB: return "Tab";
-        case VK_RETURN: return "Enter"; case VK_CAPITAL: return "Caps"; case VK_SHIFT: return "Shift";
-        case VK_LSHIFT: return "LShift"; case VK_RSHIFT: return "RShift";
-        case VK_CONTROL: return "Ctrl"; case VK_LCONTROL: return "LCtrl"; case VK_RCONTROL: return "RCtrl";
-        case VK_MENU: return "Alt"; case VK_LMENU: return "LAlt"; case VK_RMENU: return "RAlt";
-        case VK_ESCAPE: return "Esc"; case VK_DELETE: return "Del"; case VK_INSERT: return "Ins";
-        case VK_HOME: return "Home"; case VK_END: return "End"; case VK_PRIOR: return "PgUp";
-        case VK_NEXT: return "PgDn";
-        case VK_LEFT: return "\xe2\x86\x90"; case VK_RIGHT: return "\xe2\x86\x92";
-        case VK_UP: return "\xe2\x86\x91"; case VK_DOWN: return "\xe2\x86\x93";
-        case VK_LWIN: return "Win"; case VK_RWIN: return "Win"; case VK_APPS: return "Menu";
-        case VK_F1: return "F1"; case VK_F2: return "F2"; case VK_F3: return "F3"; case VK_F4: return "F4";
-        case VK_F5: return "F5"; case VK_F6: return "F6"; case VK_F7: return "F7"; case VK_F8: return "F8";
-        case VK_F9: return "F9"; case VK_F10: return "F10"; case VK_F11: return "F11"; case VK_F12: return "F12";
-        case 0xBA: return ";"; case 0xBB: return "="; case 0xBC: return ","; case 0xBD: return "-";
-        case 0xBE: return "."; case 0xBF: return "/"; case 0xC0: return "`"; case 0xDB: return "[";
-        case 0xDC: return "\\"; case 0xDD: return "]"; case 0xDE: return "'";
-        default:
-            if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) { snprintf(buf, 32, "N%d", vk - VK_NUMPAD0); return buf; }
-            snprintf(buf, 32, "%d", vk); return buf;
-    }
-}
-
-static std::string jsonEsc(const char* s) {
-    std::string out;
-    for (const unsigned char* p = (const unsigned char*)s; *p; ++p) {
-        if (*p == '\\') out += "\\\\";
-        else if (*p == '"') out += "\\\"";
-        else if (*p >= 0x20) out += (char)*p;
-    }
-    return out;
-}
 static int jsonInt(const char* json, int fallback) {
     if (!json) return fallback;
     while (*json && !((*json >= '0' && *json <= '9') || *json == '-')) ++json;
@@ -337,7 +308,7 @@ static std::string buildKeyTableJson() {
     for (size_t i = 0; i < sorted.size(); ++i) {
         const char* l = vkLabel(sorted[i].first, lbuf);
         if (i) table += ",";
-        table += "{\"l\":\"" + jsonEsc(l) + "\",\"c\":" + std::to_string(sorted[i].second) + "}";
+        table += "{\"l\":\"" + jsonEscape(l) + "\",\"c\":" + std::to_string(sorted[i].second) + "}";
     }
     table += "]";
     return table;
@@ -361,7 +332,7 @@ static std::string buildTopAppsJson() {
     for (size_t i = 0; i < apps.size(); ++i) {
         if (i) out += ",";
         int pct = appTot ? (int)(apps[i].second * 100 / appTot) : 0;
-        out += "{\"n\":\"" + jsonEsc(apps[i].first.c_str()) + "\",\"c\":" + std::to_string(apps[i].second) +
+        out += "{\"n\":\"" + jsonEscape(apps[i].first.c_str()) + "\",\"c\":" + std::to_string(apps[i].second) +
                ",\"p\":" + std::to_string(pct) + "}";
     }
     out += "]";
@@ -394,88 +365,119 @@ static std::string buildApps24hJson() {
     for (size_t i = 0; i < apps24hVec.size(); ++i) {
         if (i) out += ",";
         int pct = app24hTot ? (int)(apps24hVec[i].second * 100 / app24hTot) : 0;
-        out += "{\"n\":\"" + jsonEsc(apps24hVec[i].first.c_str()) + "\",\"c\":" + std::to_string(apps24hVec[i].second) +
+        out += "{\"n\":\"" + jsonEscape(apps24hVec[i].first.c_str()) + "\",\"c\":" + std::to_string(apps24hVec[i].second) +
                ",\"p\":" + std::to_string(pct) + "}";
     }
     out += "]";
     return out;
 }
 
-static std::string buildStatsJson() {
-    ensureCurDay();
-    auto& days = app().days;
-    auto it = days.find(app().cur);
+// 关键约束：core-ui 的 set-trap 无值相等判断，set_json 会让依赖键的绑定全部重求值。
+// 故拆为独立顶层键 + 快照 diff，只推送内容变化的键。
 
-    uint64_t tKeys = 0, tClicks = 0, tMotion = 0, tDistPx = 0;
-    uint32_t tML = 0, tMR = 0, tMM = 0;
-    if (it != days.end()) {
-        const DayData& d = it->second;
-        tKeys = d.keys; tClicks = d.clicks; tMotion = d.motion; tDistPx = d.distPx;
-        tML = d.mLeft; tMR = d.mRight; tMM = d.mMid;
-    }
+// 今日概况：{keys, clicks, motion, distCm, activeSec}
+static std::string buildTodayJson() {
+    auto it = app().days.find(app().cur);
+    if (it == app().days.end())
+        return "{\"keys\":0,\"clicks\":0,\"motion\":0,\"distCm\":0,\"activeSec\":0}";
+    const DayData& d = it->second;
+    return "{\"keys\":" + std::to_string(d.keys) + ",\"clicks\":" + std::to_string(d.clicks) +
+           ",\"motion\":" + std::to_string(d.motion) + ",\"distCm\":" + std::to_string(distToCm(d.distPx)) +
+           ",\"activeSec\":" + std::to_string(d.activeSec) + "}";
+}
 
-    uint64_t totKeys = 0, totClicks = 0, totActive = 0, totMotion = 0, totDistPx = 0;
-    uint64_t aL = 0, aR = 0, aM = 0;
-    for (auto& kv : days) {
+// 累计概况：{keys, clicks, days, activeSec, distCm}
+static std::string buildTotalJson() {
+    uint64_t totKeys = 0, totClicks = 0, totActive = 0, totDistPx = 0;
+    for (auto& kv : app().days) {
         const DayData& d = kv.second;
         totKeys += d.keys;
         totClicks += d.clicks;
         totActive += d.activeSec;
-        totMotion += d.motion;
         totDistPx += d.distPx;
-        aL += d.mLeft; aR += d.mRight; aM += d.mMid;
     }
-    int totDays = (int)days.size();
-
-    std::string table = buildKeyTableJson();
-
-    std::string out;
-    out += "{\"paused\":" + std::string(app().paused ? "true" : "false");
-    out += ",\"autostart\":" + std::string(IsAutoStart() ? "true" : "false");
-    out += ",\"optAppTrack\":" + std::string(app().optAppTrack ? "true" : "false");
-    out += ",\"today\":{\"keys\":" + std::to_string(tKeys) + ",\"clicks\":" + std::to_string(tClicks) +
-           ",\"motion\":" + std::to_string(tMotion) + ",\"distCm\":" + std::to_string(distToCm(tDistPx)) +
-           ",\"activeSec\":" + std::to_string(it != days.end() ? it->second.activeSec : 0) + "}";
-    out += ",\"total\":{\"keys\":" + std::to_string(totKeys) + ",\"clicks\":" + std::to_string(totClicks) +
-           ",\"days\":" + std::to_string(totDays) + ",\"activeSec\":" + std::to_string(totActive) +
+    return "{\"keys\":" + std::to_string(totKeys) + ",\"clicks\":" + std::to_string(totClicks) +
+           ",\"days\":" + std::to_string(app().days.size()) +
+           ",\"activeSec\":" + std::to_string(totActive) +
            ",\"distCm\":" + std::to_string(distToCm(totDistPx)) + "}";
-    out += ",\"mouseToday\":{\"left\":" + std::to_string(tML) + ",\"right\":" + std::to_string(tMR) +
-           ",\"mid\":" + std::to_string(tMM) + ",\"total\":" + std::to_string((uint64_t)tML + tMR + tMM) + "}";
-    out += ",\"mouseAll\":{\"left\":" + std::to_string(aL) + ",\"right\":" + std::to_string(aR) +
+}
+
+// 今日鼠标按钮：{left, right, mid, total}
+static std::string buildMouseTodayJson() {
+    auto it = app().days.find(app().cur);
+    if (it == app().days.end())
+        return "{\"left\":0,\"right\":0,\"mid\":0,\"total\":0}";
+    const DayData& d = it->second;
+    return "{\"left\":" + std::to_string(d.mLeft) + ",\"right\":" + std::to_string(d.mRight) +
+           ",\"mid\":" + std::to_string(d.mMid) +
+           ",\"total\":" + std::to_string((uint64_t)d.mLeft + d.mRight + d.mMid) + "}";
+}
+
+// 累计鼠标：{left, right, mid, total, motion}
+static std::string buildMouseAllJson() {
+    uint64_t aL = 0, aR = 0, aM = 0, totMotion = 0;
+    for (auto& kv : app().days) {
+        const DayData& d = kv.second;
+        aL += d.mLeft; aR += d.mRight; aM += d.mMid; totMotion += d.motion;
+    }
+    return "{\"left\":" + std::to_string(aL) + ",\"right\":" + std::to_string(aR) +
            ",\"mid\":" + std::to_string(aM) + ",\"total\":" + std::to_string(aL + aR + aM) +
            ",\"motion\":" + std::to_string(totMotion) + "}";
-    out += ",\"keyTable\":" + table;
-    // 今日活跃应用 Top / 24h 应用使用（拆分为独立构建函数）
-    out += ",\"apps\":" + buildTopAppsJson();
-    out += ",\"apps24h\":" + buildApps24hJson();
-    // 存储概况：数据文件字节数（缓存）、覆盖天数、最早/最晚日期
+}
+
+// 存储概况：数据文件字节数（缓存）、覆盖天数、最早/最晚日期
+static std::string buildStorageJson() {
     StorageInfo si = storageInfo();
-    out += ",\"storage\":{\"bytes\":" + std::to_string(si.bytes) +
+    return "{\"bytes\":" + std::to_string(si.bytes) +
            ",\"days\":" + std::to_string(si.days) +
            ",\"first\":\"" + (si.days ? dayIndexToStr(si.first) : "") + "\"" +
            ",\"last\":\"" + (si.days ? dayIndexToStr(si.last) : "") + "\"}";
-    // 当前排除列表
-    if (!app().excludeApps.empty()) {
-        out += ",\"excludeList\":[";
-        bool first = true;
-        for (auto& e : app().excludeApps) {
-            if (!first) out += ",";
-            out += "\"" + jsonEsc(e.c_str()) + "\"";
-            first = false;
-        }
-        out += "]";
-    } else {
-        out += ",\"excludeList\":[]";
+}
+
+// 前台应用排除列表（v-for 数据源）
+static std::string buildExcludeListJson() {
+    if (app().excludeApps.empty()) return "[]";
+    std::string out = "[";
+    bool first = true;
+    for (auto& e : app().excludeApps) {
+        if (!first) out += ",";
+        out += "\"" + jsonEscape(e.c_str()) + "\"";
+        first = false;
     }
-    out += "}";
-    return out;
+    return out + "]";
+}
+
+// 快照：键名 → 上次推送的 JSON 串。内容相同则跳过 set_json，避免无谓绑定重求值
+static std::map<std::string, std::string> g_pushSnap;
+
+// 推送单个键（内容变化才写）；返回是否真的写入了
+static bool pushKeyIfChanged(const char* name, const std::string& json) {
+    auto it = g_pushSnap.find(name);
+    if (it != g_pushSnap.end() && it->second == json) return false;
+    g_pushSnap[name] = json;
+    ui_page_set_json(g_page, name, json.c_str());
+    return true;
 }
 
 static void pushStats() {
     if (!g_page) return;
-    std::string json = buildStatsJson();
-    ui_page_set_json(g_page, "stats", json.c_str());
-    if (g_win) ui_window_invalidate(g_win);
+    g_lastPushTick = GetTickCount();   // 所有调用路径共享同一节流窗口
+    ensureCurDay();
+    bool changed = false;
+    changed |= pushKeyIfChanged("pausedS",     app().paused ? "true" : "false");
+    changed |= pushKeyIfChanged("autostartS",  IsAutoStart() ? "true" : "false");
+    changed |= pushKeyIfChanged("optAppTrackS",app().optAppTrack ? "true" : "false");
+    changed |= pushKeyIfChanged("todayS",      buildTodayJson());
+    changed |= pushKeyIfChanged("totalS",      buildTotalJson());
+    changed |= pushKeyIfChanged("mouseTodayS", buildMouseTodayJson());
+    changed |= pushKeyIfChanged("mouseAllS",   buildMouseAllJson());
+    changed |= pushKeyIfChanged("keyTableS",   buildKeyTableJson());
+    changed |= pushKeyIfChanged("appsS",       buildTopAppsJson());
+    changed |= pushKeyIfChanged("apps24hS",    buildApps24hJson());
+    changed |= pushKeyIfChanged("storageS",    buildStorageJson());
+    changed |= pushKeyIfChanged("excludeListS",buildExcludeListJson());
+    // 数据确有变化才请求重绘（热力图/趋势图 canvas 直接读 C++ 内存绘制）
+    if (changed && g_win) ui_window_invalidate(g_win);
 }
 
 // 键位定义：zone 分区（0=主键区 1=编辑键区 2=小键盘区），x/y 为分区内网格坐标，
@@ -1840,9 +1842,18 @@ static VOID CALLBACK TimerProc(HWND, UINT, UINT_PTR id, DWORD) {
     case TI_POLL: {
         pollCommands();
         pollForeApp();                      // 前台应用轮询（仅开启时有效）
+        break;
+    }
+    case TI_REFRESH: {                      // 60 帧 UI 刷新轮询
         if (app().needsRefresh && !g_inResizeMode) {   // 拖拽中不重统计，避免卡顿
-            app().needsRefresh = false;
-            pushStats();
+            // 节流 + 可见性：合并高频输入（点击/移动）产生的刷新请求；
+            // 窗口隐藏（托盘/最小化）时跳过全量 UI 刷新，needsRefresh 保留
+            // 待窗口可见后由本分支补刷，避免隐藏期间白做重活。
+            bool visible = g_hwnd && IsWindowVisible(g_hwnd);
+            if (visible && GetTickCount() - g_lastPushTick >= kPushMinMs) {
+                app().needsRefresh = false;
+                pushStats();
+            }
         }
         break;
     }
@@ -1924,6 +1935,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     SetTimer(g_hwnd, TI_SAVE, kSaveMs, TimerProc);
     SetTimer(g_hwnd, TI_ACTIVE, 1000, TimerProc);
     SetTimer(g_hwnd, TI_POLL, 500, TimerProc);
+    SetTimer(g_hwnd, TI_REFRESH, kRefreshMs, TimerProc);
 
     pushStats();
 
@@ -1939,6 +1951,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     KillTimer(g_hwnd, TI_SAVE);
     KillTimer(g_hwnd, TI_ACTIVE);
     KillTimer(g_hwnd, TI_POLL);
+    KillTimer(g_hwnd, TI_REFRESH);
     RemoveWindowSubclass(g_hwnd, SubclassProc, kSubclassId);
 
     UninstallHooks();

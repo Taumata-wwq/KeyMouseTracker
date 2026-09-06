@@ -6,7 +6,6 @@
 #include <vector>
 #include <string>
 #include <set>
-#include <map>
 
 static bool writeFileBytes(const std::wstring& path, const std::vector<unsigned char>& data) {
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -17,63 +16,12 @@ static bool writeFileBytes(const std::wstring& path, const std::vector<unsigned 
     return ok != FALSE;
 }
 
-// 按键虚拟键码 → 可读名称（与主程序 vkLabel 对齐的轻量版，UTF-8 输出）
-static std::string vkName(uint8_t vk) {
-    char buf[16];
-    if (vk >= 'A' && vk <= 'Z') { buf[0] = (char)vk; buf[1] = 0; return buf; }
-    if (vk >= '0' && vk <= '9') { buf[0] = (char)vk; buf[1] = 0; return buf; }
-    switch (vk) {
-        case 32: return "Space"; case 8: return "Back"; case 9: return "Tab";
-        case 13: return "Enter"; case 20: return "Caps"; case 16: return "Shift";
-        case 160: return "LShift"; case 161: return "RShift";
-        case 17: return "Ctrl"; case 162: return "LCtrl"; case 163: return "RCtrl";
-        case 18: return "Alt"; case 164: return "LAlt"; case 165: return "RAlt";
-        case 27: return "Esc"; case 46: return "Del"; case 45: return "Ins";
-        case 36: return "Home"; case 35: return "End"; case 33: return "PgUp"; case 34: return "PgDn";
-        case 37: return "\xE2\x86\x90"; case 39: return "\xE2\x86\x92";  // ← →
-        case 38: return "\xE2\x86\x91"; case 40: return "\xE2\x86\x93";  // ↑ ↓
-        case 91: case 92: return "Win"; case 93: return "Menu";
-        case 144: return "Num";
-        case 96: case 97: case 98: case 99: case 100: case 101: case 102:
-        case 103: case 104: case 105: { snprintf(buf, sizeof(buf), "N%d", vk - 96); return buf; }
-        case 106: return "N*"; case 107: return "N+"; case 109: return "N-";
-        case 110: return "N."; case 111: return "N/";
-        case 186: return ";"; case 187: return "="; case 188: return ","; case 189: return "-";
-        case 190: return "."; case 191: return "/"; case 192: return "`"; case 219: return "[";
-        case 220: return "\\"; case 221: return "]"; case 222: return "'";
-        default:
-            if (vk >= 112 && vk <= 123) { snprintf(buf, sizeof(buf), "F%d", vk - 111); return buf; }
-            snprintf(buf, sizeof(buf), "VK%d", (int)vk);
-            return buf;
-    }
-}
-
 // CSV 字段转义：含逗号/引号/换行时用双引号包裹并加倍内部引号（Excel 兼容）
 static std::string csvEscape(const std::string& s) {
     if (s.find_first_of(",\"\r\n") == std::string::npos) return s;
     std::string r = "\"";
     for (char c : s) { if (c == '"') r += "\"\""; else r += c; }
     r += "\"";
-    return r;
-}
-
-// JSON 字符串转义（UTF-8 字节流）
-static std::string jsonEscape(const std::string& s) {
-    std::string r;
-    for (unsigned char c : s) {
-        switch (c) {
-            case '"': r += "\\\""; break;
-            case '\\': r += "\\\\"; break;
-            case '\b': r += "\\b"; break;
-            case '\f': r += "\\f"; break;
-            case '\n': r += "\\n"; break;
-            case '\r': r += "\\r"; break;
-            case '\t': r += "\\t"; break;
-            default:
-                if (c < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", c); r += b; }
-                else r += (char)c;
-        }
-    }
     return r;
 }
 
@@ -136,7 +84,7 @@ bool ExportCSV(const std::wstring& path, int startIdx, int endIdx) {
     }
     out += "=== 按键×小时矩阵 ===\r\n";
     out += "日期,小时";
-    for (uint8_t k : ks) out += "," + csvEscape(vkName(k));
+    for (uint8_t k : ks) { char kb[32]; out += "," + csvEscape(vkLabel(k, kb)); }
     out += ",点击\r\n";
     for (auto& kv : app().days) {
         int idx = (int)kv.first;
@@ -164,9 +112,11 @@ bool ExportCSV(const std::wstring& path, int startIdx, int endIdx) {
         int idx = (int)kv.first;
         if (idx < startIdx || idx > endIdx) continue;
         std::string ds = dayIndexToStr(idx);
-        for (auto& kc : kv.second.keyCounts)
-            out += ds + "," + std::to_string((int)kc.first) + "," + csvEscape(vkName(kc.first)) +
+        for (auto& kc : kv.second.keyCounts) {
+            char kb[32];
+            out += ds + "," + std::to_string((int)kc.first) + "," + csvEscape(vkLabel(kc.first, kb)) +
                    "," + std::to_string(kc.second) + "\r\n";
+        }
     }
     out += "\r\n";
 
@@ -240,7 +190,7 @@ bool ExportJSON(const std::wstring& path, int startIdx, int endIdx) {
     out += "],\"excludeApps\":[";
     {
         bool f = true;
-        for (auto& e : app().excludeApps) { if (!f) out += ","; f = false; out += "\"" + jsonEscape(e) + "\""; }
+        for (auto& e : app().excludeApps) { if (!f) out += ","; f = false; out += "\"" + jsonEscape(e.c_str()) + "\""; }
     }
     out += "]},\"days\":[";
     bool firstDay = true;
@@ -302,7 +252,7 @@ bool ExportJSON(const std::wstring& path, int startIdx, int endIdx) {
         out += "},\"appCounts\":{";
         {
             bool f = true;
-            for (auto& ac : d.appCounts) { if (!f) out += ","; f = false; out += "\"" + jsonEscape(ac.first) + "\":" + std::to_string(ac.second); }
+            for (auto& ac : d.appCounts) { if (!f) out += ","; f = false; out += "\"" + jsonEscape(ac.first.c_str()) + "\":" + std::to_string(ac.second); }
         }
         out += "},\"minuteActivity\":{";
         {

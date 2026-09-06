@@ -43,19 +43,31 @@ static bool runSchtasks(const std::wstring& args, DWORD* exitCodeOut = nullptr) 
     return code == 0;
 }
 
+// 自启状态缓存：IsAutoStart() 每次要 spawn schtasks.exe 查询计划任务（约 200ms），
+// 而 UI 刷新（pushStats）每 500ms 就会读一次自启状态。若每次都现查，刷新一次
+// 就卡 200ms+。状态只在 SetAutoStart() 切换时变化，故缓存后刷新零开销。
+// -1 = 未查询；0 = 关闭；1 = 开启
+static int g_autoStartCached = -1;
+
 bool SetAutoStart(bool enable) {
     clearRunKey();
     std::wstring tn = kTaskName;
+    bool ok;
     if (enable) {
         std::wstring tr = L"\"" + GetExePath() + L"\"";
-        return runSchtasks(L"/create /tn " + tn + L" /tr " + tr +
-                           L" /sc onlogon /rl highest /f");
+        ok = runSchtasks(L"/create /tn " + tn + L" /tr " + tr +
+                         L" /sc onlogon /rl highest /f");
+    } else {
+        ok = runSchtasks(L"/delete /tn " + tn + L" /f");
     }
-    return runSchtasks(L"/delete /tn " + tn + L" /f");
+    if (ok) g_autoStartCached = enable ? 1 : 0;
+    return ok;
 }
 
 bool IsAutoStart() {
+    if (g_autoStartCached >= 0) return g_autoStartCached != 0;
     DWORD code = 1;
     runSchtasks(L"/query /tn " + std::wstring(kTaskName), &code);
-    return code == 0;
+    g_autoStartCached = (code == 0) ? 1 : 0;
+    return g_autoStartCached != 0;
 }

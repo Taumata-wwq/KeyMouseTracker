@@ -8,7 +8,10 @@ export default {
     return {
       activeView: 'overview',
       trendModeIdx: 0,   // 0=按日 1=按月 2=按年 3=按周
-      stats: null,
+      // 统计数据由 C++ 按独立键局部推送（S 后缀）：仅内容变化的键会触发绑定重求值
+      todayS: null, totalS: null, mouseTodayS: null, mouseAllS: null,
+      keyTableS: [], appsS: [], apps24hS: [], storageS: null,
+      pausedS: false, autostartS: false, optAppTrackS: false, excludeListS: [],
       pauseCmd: 0,
       autostartCmd: 0,
       exitCmd: 0,
@@ -71,16 +74,16 @@ export default {
     };
   },
   computed: {
-    paused() { return !!(this.stats && this.stats.paused); },
-    autostart() { return !!(this.stats && this.stats.autostart); },
-    today() { return (this.stats && this.stats.today) || { keys: 0, clicks: 0, motion: 0 }; },
-    total() { return (this.stats && this.stats.total) || { keys: 0, clicks: 0, days: 0, activeSec: 0 }; },
-    mouse() { return (this.stats && this.stats.mouseToday) || { left: 0, right: 0, mid: 0, total: 0 }; },
-    mouseAll() { return (this.stats && this.stats.mouseAll) || { left: 0, right: 0, mid: 0, total: 0, motion: 0 }; },
-    storage() { return (this.stats && this.stats.storage) || { bytes: 0, days: 0, first: '', last: '' }; },
-    apps() { return (this.stats && this.stats.apps) || []; },
+    paused() { return !!this.pausedS; },
+    autostart() { return !!this.autostartS; },
+    today() { return this.todayS || { keys: 0, clicks: 0, motion: 0 }; },
+    total() { return this.totalS || { keys: 0, clicks: 0, days: 0, activeSec: 0 }; },
+    mouse() { return this.mouseTodayS || { left: 0, right: 0, mid: 0, total: 0 }; },
+    mouseAll() { return this.mouseAllS || { left: 0, right: 0, mid: 0, total: 0, motion: 0 }; },
+    storage() { return this.storageS || { bytes: 0, days: 0, first: '', last: '' }; },
+    apps() { return this.appsS || []; },
     apps24h() {
-      var a = (this.stats && this.stats.apps24h) || [];
+      var a = this.apps24hS || [];
       if (!a.length) return a;
       var max = a[0].c || 1;
       for (var i = 0; i < a.length; i++) {
@@ -89,9 +92,9 @@ export default {
       }
       return a;
     },
-    optAppTrack() { return !!(this.stats && this.stats.optAppTrack); },
-    excludeList() { return (this.stats && this.stats.excludeList) || []; },
-    keyTable() { return (this.stats && this.stats.keyTable) || []; },
+    optAppTrack() { return !!this.optAppTrackS; },
+    excludeList() { return this.excludeListS || []; },
+    keyTable() { return this.keyTableS || []; },
     keyMax() {
       var t = this.keyTable;
       if (!t || !t.length) return 1;
@@ -700,7 +703,7 @@ export default {
         <div class="section flush">
           <ScrollView class="scroll-fill">
             <div class="mouse-grid">
-            <label class="ab-title">键鼠使用记录 v0.2.0</label>
+            <label class="ab-title">键鼠使用记录 v0.2.1</label>
             <label class="ab-line">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
 
             <label class="ab-h2" style="margin-top: 16px;">隐私与安全</label>
