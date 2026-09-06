@@ -1335,6 +1335,17 @@ float Renderer::MeasureTextWidth(const std::wstring& text, float fontSize,
                                  const wchar_t* family, DWRITE_FONT_WEIGHT weight) {
     if (text.empty() || !dwFactory_) return 0.0f;
 
+    const wchar_t* resolvedFamily = family ? family : DefaultFontFamily();
+    if (!resolvedFamily) resolvedFamily = L"Segoe UI";
+    TextMeasureKey key;
+    key.text = text;
+    key.fontSize = fontSize;
+    key.maxWidth = -1.0f;
+    key.weight = static_cast<uint32_t>(weight);
+    key.family = resolvedFamily;
+    auto it = textMeasureCache_.find(key);
+    if (it != textMeasureCache_.end()) return it->second;
+
     auto fmt = GetTextFormat(fontSize, family, weight);
     if (!fmt) return 0.0f;
 
@@ -1351,12 +1362,25 @@ float Renderer::MeasureTextWidth(const std::wstring& text, float fontSize,
     DWRITE_TEXT_METRICS metrics{};
     hr = layout->GetMetrics(&metrics);
     if (FAILED(hr)) return 0.0f;
+
+    if (textMeasureCache_.size() >= kMaxTextMeasureCache)
+        textMeasureCache_.clear();
+    textMeasureCache_.emplace(std::move(key), metrics.widthIncludingTrailingWhitespace);
     return metrics.widthIncludingTrailingWhitespace;
 }
 
 float Renderer::MeasureTextHeight(const std::wstring& text, float maxWidth, float fontSize,
                                    DWRITE_FONT_WEIGHT weight) {
     if (text.empty() || !dwFactory_) return fontSize + 4.0f;
+
+    TextMeasureKey key;
+    key.text = text;
+    key.fontSize = fontSize;
+    key.maxWidth = maxWidth;
+    key.weight = static_cast<uint32_t>(weight);
+    key.family = theme::kFontFamily;
+    auto it = textMeasureCache_.find(key);
+    if (it != textMeasureCache_.end()) return it->second;
 
     auto fmt = GetTextFormat(fontSize, theme::kFontFamily, weight);
     if (!fmt) return fontSize + 4.0f;
@@ -1374,6 +1398,10 @@ float Renderer::MeasureTextHeight(const std::wstring& text, float maxWidth, floa
     DWRITE_TEXT_METRICS metrics{};
     hr = layout->GetMetrics(&metrics);
     if (FAILED(hr)) return fontSize + 4.0f;
+
+    if (textMeasureCache_.size() >= kMaxTextMeasureCache)
+        textMeasureCache_.clear();
+    textMeasureCache_.emplace(std::move(key), metrics.height);
     return metrics.height;
 }
 

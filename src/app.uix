@@ -20,6 +20,10 @@ export default {
       linkUrl: '',     // 待打开的链接（与 linkCmd 配套，须在 data 中初始化才能被 C++ 读到）
       dark: true,       // 由 C++ 侧同步（持久化主题偏好）
       compact: false,    // 窗口较窄时数值缩写显示（由 C++ 侧同步）
+      excludeStr: '',  // 前台应用排除列表（逗号分隔 exe 名）
+      exclCmd: 0,
+      removeExclCmd: 0,   // 移除单个排除项
+      removeExclName: '', // 要移除的 exe 名
       dateStr: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
       monthStr: now.getFullYear() + '-' + pad(now.getMonth() + 1),
       yearNum: now.getFullYear(),
@@ -34,6 +38,8 @@ export default {
         { id: 'keyheat', label: '键盘热力图' },
         { id: 'mouse', label: '鼠标统计' },
         { id: 'mouseheat', label: '鼠标热力图' },
+        { id: 'trend', label: '历史趋势' },
+        { id: 'data', label: '设置' },
         { id: 'about', label: '关于' }
       ],
       trendModes: [
@@ -48,7 +54,20 @@ export default {
       yearPage: Math.max(2020, now.getFullYear() - 4),
       calWeekNames: ['一', '二', '三', '四', '五', '六', '日'],
       // 键盘配列：0=108键 1=87键 2=61键（关于页设置，C++ 持久化）
-      kbLayout: 1
+      kbLayout: 1,
+      // 范围选择弹窗（导出 CSV/JSON、清除数据的日期范围；由 C++ 侧开关）
+      rangePickOpen: false,
+      rangeKind: '',   // "csv" / "json" / "clear"
+      // 起始/结束年月日（0 = 不限/全部历史），由弹窗内可调节框编辑
+      rangeStartY: 0, rangeStartM: 0, rangeStartD: 0,
+      rangeEndY: 0, rangeEndM: 0, rangeEndD: 0,
+      rangeStart: '',
+      rangeEnd: '',
+      rangePickCmd: 0,
+      rangeCancelCmd: 0,
+      exportCsvCmd: 0,
+      exportJsonCmd: 0,
+      optAppCmd: 0
     };
   },
   computed: {
@@ -58,6 +77,20 @@ export default {
     total() { return (this.stats && this.stats.total) || { keys: 0, clicks: 0, days: 0, activeSec: 0 }; },
     mouse() { return (this.stats && this.stats.mouseToday) || { left: 0, right: 0, mid: 0, total: 0 }; },
     mouseAll() { return (this.stats && this.stats.mouseAll) || { left: 0, right: 0, mid: 0, total: 0, motion: 0 }; },
+    storage() { return (this.stats && this.stats.storage) || { bytes: 0, days: 0, first: '', last: '' }; },
+    apps() { return (this.stats && this.stats.apps) || []; },
+    apps24h() {
+      var a = (this.stats && this.stats.apps24h) || [];
+      if (!a.length) return a;
+      var max = a[0].c || 1;
+      for (var i = 0; i < a.length; i++) {
+        a[i].barW = Math.round(a[i].c * 100 / max);
+        a[i].barCls = 'bw-' + (Math.round(a[i].barW / 5) * 5);
+      }
+      return a;
+    },
+    optAppTrack() { return !!(this.stats && this.stats.optAppTrack); },
+    excludeList() { return (this.stats && this.stats.excludeList) || []; },
     keyTable() { return (this.stats && this.stats.keyTable) || []; },
     keyMax() {
       var t = this.keyTable;
@@ -137,12 +170,12 @@ export default {
       dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
       return dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1) + '-' + this.pad2(dt.getDate());
     },
-    stepDate(mode, n) {   // mode: 0=日 ±n天, 3=周 ±n天(±7)
-      var target = (mode == 3) ? this.weekStr : this.dateStr;
+    stepDate(mode, n) {   // mode: 0=日 ±n天, 4=本周时段 ±n天(±7)
+      var target = (mode == 4) ? this.weekStr : this.dateStr;
       var p = String(target || '').split('-');
       var dt = new Date(parseInt(p[0]) || 2000, (parseInt(p[1]) || 1) - 1, (parseInt(p[2]) || 1) + n);
       var s = dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1) + '-' + this.pad2(dt.getDate());
-      if (mode == 3) this.weekStr = s; else this.dateStr = s;
+      if (mode == 4) this.weekStr = s; else this.dateStr = s;
     },
     stepMonth(n) {
       var p = String(this.monthStr || '').split('-');
@@ -157,10 +190,42 @@ export default {
     togglePause() { this.pauseCmd = this.pauseCmd + 1; },
     toggleAutostart() { this.autostartCmd = this.autostartCmd + 1; },
     toggleTheme() { this.themeCmd = this.themeCmd + 1; },
+    toggleOptApp() { this.optAppCmd = this.optAppCmd + 1; },
+    applyExcl() { this.exclCmd++; },
+    removeExcl(i) { this.removeExclName = this.excludeList[i]; this.removeExclCmd++; },
     requestExit() { this.exitCmd = this.exitCmd + 1; },
     exportData() { this.exportCmd = this.exportCmd + 1; },
     importData() { this.importCmd = this.importCmd + 1; },
-    clearData() { this.clearCmd = this.clearCmd + 1; },
+    clearData() { this.initRangeFields(); this.clearCmd = this.clearCmd + 1; },
+    exportCSV() { this.initRangeFields(); this.exportCsvCmd = this.exportCsvCmd + 1; },
+    exportJSON() { this.initRangeFields(); this.exportJsonCmd = this.exportJsonCmd + 1; },
+    // 打开范围弹窗前按数据实际覆盖范围（或今天）预填起始/结束
+    initRangeFields() {
+      var parse = function (s) {
+        var p = String(s || '').split('-');
+        if (p.length >= 3) return { y: parseInt(p[0]) || 0, m: parseInt(p[1]) || 0, d: parseInt(p[2]) || 0 };
+        return null;
+      };
+      var st = parse(this.storage.first);
+      var en = parse(this.storage.last);
+      var now = new Date();
+      if (!st) st = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+      if (!en) en = st;
+      this.rangeStartY = st.y; this.rangeStartM = st.m; this.rangeStartD = st.d;
+      this.rangeEndY = en.y; this.rangeEndM = en.m; this.rangeEndD = en.d;
+    },
+    ymdStr(y, m, d) {
+      if (!y || !m || !d) return '';
+      return y + '-' + this.pad2(m) + '-' + this.pad2(d);
+    },
+    confirmRange() {
+      this.rangeStart = this.ymdStr(this.rangeStartY, this.rangeStartM, this.rangeStartD);
+      this.rangeEnd = this.ymdStr(this.rangeEndY, this.rangeEndM, this.rangeEndD);
+      this.rangePickCmd = this.rangePickCmd + 1;
+    },
+    // 全部历史 = 恢复为完整数据范围（最早 ~ 最晚），而不是归零
+    rangeAll() { this.initRangeFields(); },
+    cancelRange() { this.rangeCancelCmd = this.rangeCancelCmd + 1; this.rangePickOpen = false; },
       openLink(u) { this.linkUrl = u; this.linkCmd++; },
     fmt(v) {
       if (v == null || v === '') return '0';
@@ -175,6 +240,20 @@ export default {
       // 累计活跃时间显示为“一位小数小时”格式，单位缩写为 h
       var h = (sec || 0) / 3600;
       return h.toFixed(1) + 'h';
+    },
+    // 里程（厘米）→ 可读距离：km / m / cm
+    fmtDist(cm) {
+      var c = cm || 0;
+      if (c >= 100000) return (c / 100000).toFixed(2) + ' km';
+      if (c >= 1000) return (c / 100).toFixed(1) + ' m';
+      return c + ' cm';
+    },
+    // 字节数 → 可读大小（B / KB / MB）
+    fmtBytes(b) {
+      var n = b || 0;
+      if (n >= 1048576) return (n / 1048576).toFixed(2) + ' MB';
+      if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+      return n + ' B';
     },
     // 计数条宽度百分比：钳制到 [0,100]，并保证有值的最短可见条，避免除零/满值溢出
     pct(c, m) {
@@ -192,7 +271,7 @@ export default {
         var p = String(this.dateStr).split('-');
         this.calY = parseInt(p[0]) || now.getFullYear();
         this.calM = parseInt(p[1]) || (now.getMonth() + 1);
-      } else if (this.trendModeIdx == 3) {   // 周：以周一所在月份打开月历
+      } else if (this.trendModeIdx == 4) {   // 本周时段：以周一所在月份打开月历
         var p = String(this.weekStr).split('-');
         this.calY = parseInt(p[0]) || now.getFullYear();
         this.calM = parseInt(p[1]) || (now.getMonth() + 1);
@@ -215,8 +294,8 @@ export default {
     shiftYears(n) { this.yearPage = Math.max(2020, this.yearPage + n); },
     pickDay(d) {
       if (d <= 0) return;
-      if (this.trendModeIdx == 3) {
-        this.weekStr = this.mondayYMD(this.calY, this.calM, d);   // 周模式：选中日所在周
+      if (this.trendModeIdx == 4) {
+        this.weekStr = this.mondayYMD(this.calY, this.calM, d);   // 本周时段：选中日所在周
       } else {
         this.dateStr = this.calY + '-' + this.pad2(this.calM) + '-' + this.pad2(d);
       }
@@ -250,15 +329,22 @@ export default {
   .navtab:hover { background: var(--bg-3); }
   .navtab.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
   .spacer { flex-grow: 1; }
-  /* 右侧三按钮：两种状态均以实色区分（在深浅主题下都保持可读对比度） */
-  .pill { padding: 6px 12px; border-radius: 16px; font-size: 12px;
-          cursor: pointer; white-space: nowrap; background: var(--bg-3); color: var(--fg-2); }
+  /* 右侧方形按钮：采集状态 + 主题切换（与导航标签风格一致） */
+  .circle-btn { width: 40px; padding: 6px 0; border-radius: 8px; font-size: 13px;
+                cursor: pointer; border: none; flex: none;
+                display: flex; align-items: center; justify-content: center;
+                background: var(--bg-3); color: var(--fg-2); }
   .st-run { background: #1f9d55; color: #ffffff; }        /* 采集中：绿 */
   .st-paused { background: #d97706; color: #ffffff; }     /* 已暂停：橙 */
-  .st-auto-on { background: var(--accent); color: var(--fg-on-accent); }   /* 自启开：主题蓝 */
-  .st-auto-off { background: var(--bg-3); color: var(--fg-3); }            /* 自启关：弱化 */
-  .st-theme-light { background: #f59e0b; color: #ffffff; } /* 当前浅色（点击切深）：琥珀 */
-  .st-theme-dark { background: #475569; color: #f1f5f9; } /* 当前深色（点击切浅）：石板 */
+  .st-theme-light { background: #f59e0b; color: #ffffff; } /* 当前浅色：琥珀 */
+  .st-theme-dark { background: #475569; color: #f1f5f9; } /* 当前深色：石板 */
+
+  /* 24h 应用占比进度条宽度（5% 步进） */
+  .bw-0{width:0%} .bw-5{width:5%} .bw-10{width:10%} .bw-15{width:15%} .bw-20{width:20%}
+  .bw-25{width:25%} .bw-30{width:30%} .bw-35{width:35%} .bw-40{width:40%} .bw-45{width:45%}
+  .bw-50{width:50%} .bw-55{width:55%} .bw-60{width:60%} .bw-65{width:65%} .bw-70{width:70%}
+  .bw-75{width:75%} .bw-80{width:80%} .bw-85{width:85%} .bw-90{width:90%} .bw-95{width:95%}
+  .bw-100{width:100%}
 
   .content { flex-grow: 1; width: 100%; height: 0; overflow: hidden; }
   .view { width: 100%; height: 100%; padding: 20px; gap: 16px; flex-direction: column; overflow: hidden; }
@@ -272,11 +358,15 @@ export default {
   .kpi2 .t { font-size: 12px; color: var(--fg-3); }
   .kpi2 .v { font-size: 17px; font-weight: 600; color: #4d9fff; }
   .kpi-fill { flex-grow: 1; }
+  /* 今日活跃/空闲/专注摘要行 */
+  .kpi-mini { font-size: 12px; color: var(--fg-3); text-align: left; margin-top: 2px; }
 
   .section { background: var(--card-bg); border-radius: 10px; padding: 16px 18px;
-             box-shadow: 0 1px 2px rgba(0,0,0,0.04); flex-direction: column; overflow: hidden; }
+             box-shadow: 0 1px 2px rgba(0,0,0,0.04); flex-direction: column; overflow: hidden;
+             contain: layout style; }
+  .section-title { font-size: 12px; font-weight: 600; color: var(--fg-3); text-align: center;
+                   margin-bottom: 2px; }
   .flush { flex: 1 1 auto; min-height: 0; height: 0; }
-  .section { contain: layout style; }
 
   .kbd-table { width: 100%; flex-direction: column; gap: 2px; }
   .kt-row { flex-direction: row; align-items: center; padding: 8px 10px;
@@ -288,12 +378,19 @@ export default {
   .kt-count { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); }
 
   .mouse-grid { flex-direction: column; gap: 8px; }
+  .mouse-grid2 { flex-direction: row; gap: 20px; }
+  .mouse-col { flex: 1; flex-direction: column; gap: 4px; }
   .mouse-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 8px 10px;
                border-radius: 6px; }
   .mouse-row:hover { background: var(--bg-3); }
+  .mouse-row2 { flex-direction: row; align-items: center; justify-content: space-between; padding: 7px 10px;
+                border-radius: 6px; }
+  .mouse-row2:hover { background: var(--bg-3); }
   .mouse-name { font-size: 13px; color: var(--fg); width: 140px; }
+  .mouse-name2 { font-size: 13px; color: var(--fg); }
   .mouse-bar { flex-grow: 1; height: 8px; }
   .mouse-val { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); font-weight: 600; }
+  .mouse-val2 { text-align: right; font-size: 14px; color: #4d9fff; font-weight: 600; }
   .mouse-h { font-size: 12px; color: var(--fg-3); margin-top: 6px; }
 
   .canvas { flex-grow: 1; width: 100%; min-height: 0; }
@@ -339,11 +436,36 @@ export default {
               color: var(--fg); background: var(--bg-3); border-radius: 6px; cursor: pointer; }
   .cal-cell.sel { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
 
+  /* 范围选择弹窗（导出 CSV/JSON、清除数据的日期范围） */
+  .rng-modal { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+               background: rgba(0,0,0,0.35); flex-direction: row;
+               justify-content: center; align-items: center; }
+  .rng-card { background: var(--card-bg); border-radius: 10px; padding: 16px;
+              box-shadow: 0 10px 30px rgba(0,0,0,0.30); width: 480px;
+              flex-direction: column; gap: 10px; }
+  .rng-title { font-size: 14px; font-weight: 600; color: var(--fg); }
+  .rng-hint { font-size: 12px; color: var(--fg-3); }
+  .rng-row { flex-direction: row; align-items: center; gap: 8px; }
+  .rng-label { font-size: 12px; color: var(--fg-2); width: 42px; flex: none; }
+  .rng-input { background: var(--input-bg); border: 1px solid var(--input-border);
+               border-radius: 6px; padding: 5px 8px; font-size: 12px; color: var(--fg);
+               flex-grow: 1; }
+  /* 年月日三组可调节：number 输入自带步进，仅并排 + 单位（再加宽一倍保证数字完整显示） */
+  .rng-date3 { flex-direction: row; align-items: center; gap: 4px; flex-grow: 1; }
+  .rng-input.num { width: 128px; flex: none; text-align: center; padding: 4px 2px; }
+  .rng-input.num.sm { width: 96px; }
+  .rng-unit { font-size: 11px; color: var(--fg-3); width: 14px; text-align: center; flex: none; }
+  .rng-actions { flex-direction: row; align-items: center; gap: 8px; margin-top: 4px; }
+  .rng-btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+             background: var(--bg-3); color: var(--fg-2); flex: none; white-space: nowrap; }
+  .rng-btn.on { background: var(--accent); color: var(--fg-on-accent); }
+  .rng-btn.danger { background: #b42318; color: #ffffff; }
+
   /* 关于页 */
   .ab-title { font-size: 18px; font-weight: 600; color: var(--fg); margin-bottom: 8px; }
   .ab-h2 { font-size: 13px; font-weight: 600; color: var(--fg); margin-bottom: 6px; margin-top: 12px; }
   .ab-line { font-size: 12px; color: var(--fg-2); margin-bottom: 3px; line-height: 1.5; }
-  .ab-btns { flex-direction: row; gap: 10px; margin: 4px 0 8px 0; }
+  .ab-btns { flex-direction: row; gap: 10px; margin: 4px 0; }
   /* 固定显式宽度：避免任何测量上下文缺失导致的"滚动后按钮变窄"，无论是否
    * 重跑布局都保持稳定几何（开机自启按钮文本最长）。这里将宽度整体收窄。 */
   .ab-btn { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
@@ -365,7 +487,10 @@ export default {
             background: var(--bg-3); color: #4d9fff;
             flex: none; white-space: nowrap; width: 118px; text-align: center; }
   .ab-link:hover { background: var(--accent); color: var(--fg-on-accent); }
-  .ab-section { background: var(--bg-2); border-radius: 8px; padding: 12px 14px; margin-bottom: 8px; }
+  .ab-section { background: var(--bg-2); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+  /* 里程碑徽章 */
+  .ms-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
+              background: var(--accent); color: var(--fg-on-accent); white-space: nowrap; }
 </style>
 
 <template>
@@ -375,68 +500,50 @@ export default {
               :class="activeView == t.id ? 'navtab on' : 'navtab'"
               @click="go(t.id)">{{ t.label }}</button>
       <div class="spacer"></div>
-      <button class="pill" :class="paused ? 'st-paused' : 'st-run'" @click="togglePause">
-        {{ paused ? '已暂停' : '采集中' }}
+      <button class="circle-btn" :class="paused ? 'st-paused' : 'st-run'" @click="togglePause"
+              :title="paused ? '已暂停' : '采集中'">
+        {{ paused ? '关' : '开' }}
       </button>
-      <button class="pill" :class="dark ? 'st-theme-dark' : 'st-theme-light'" @click="toggleTheme">
+      <button class="circle-btn" :class="dark ? 'st-theme-dark' : 'st-theme-light'" @click="toggleTheme"
+              :title="dark ? '切换浅色' : '切换深色'">
         {{ dark ? '☀' : '🌙' }}
       </button>
     </div>
 
     <div class="content">
-      <!-- 总览：7 项 KPI 分两行 + 历史趋势 -->
+      <!-- 总览：KPI 卡片 + 活跃/空闲 + 里程碑 + 活跃应用 -->
       <div v-if="activeView == 'overview'" class="view">
         <div class="kpiwrap">
           <div class="kpis">
             <div class="kpi2"><label class="t">今日按键</label><label class="v">{{ fmt(today.keys) }}</label></div>
             <div class="kpi2"><label class="t">今日点击</label><label class="v">{{ fmt(today.clicks) }}</label></div>
-            <div class="kpi2"><label class="t">今日移动</label><label class="v">{{ fmt(today.motion) }}</label></div>
-            <div class="kpi2"><label class="t">累计按键</label><label class="v">{{ fmt(total.keys) }}</label></div>
+            <div class="kpi2"><label class="t">今日里程</label><label class="v">{{ fmtDist(today.distCm) }}</label></div>
+            <div class="kpi2"><label class="t">今日活跃</label><label class="v">{{ fmtMin(today.activeSec) }}</label></div>
           </div>
           <div class="kpis">
+            <div class="kpi2"><label class="t">累计按键</label><label class="v">{{ fmt(total.keys) }}</label></div>
             <div class="kpi2"><label class="t">累计点击</label><label class="v">{{ fmt(total.clicks) }}</label></div>
-            <div class="kpi2"><label class="t">记录天数</label><label class="v">{{ total.days }}</label></div>
+            <div class="kpi2"><label class="t">累计里程</label><label class="v">{{ fmtDist(total.distCm) }}</label></div>
             <div class="kpi2"><label class="t">累计活跃</label><label class="v">{{ fmtMin(total.activeSec) }}</label></div>
-            <div class="kpi-fill"></div>
           </div>
         </div>
-        <div class="section flush">
-          <div class="ctrlbar">
-            <div class="modes">
-              <button id="mode_d" :class="trendModeIdx == 0 ? 'mode on' : 'mode'" @click="setMode(0)">日</button>
-              <button id="mode_w" :class="trendModeIdx == 3 ? 'mode on' : 'mode'" @click="setMode(3)">周</button>
-              <button id="mode_m" :class="trendModeIdx == 1 ? 'mode on' : 'mode'" @click="setMode(1)">月</button>
-              <button id="mode_y" :class="trendModeIdx == 2 ? 'mode on' : 'mode'" @click="setMode(2)">年</button>
-            </div>
-            <div class="spacer"></div>
-            <!-- 日：文本框 + 便携步进按钮 -->
-            <div class="datebox" v-if="trendModeIdx == 0">
-              <button class="stepper" @click="stepDate(0, -1)">‹</button>
-              <input id="date_input" type="date" class="tinput" v-model="dateStr"/>
-              <button class="stepper" @click="stepDate(0, 1)">›</button>
-            </div>
-            <!-- 周：文本框 + 便携步进按钮（步进 ±7 天） -->
-            <div class="datebox" v-if="trendModeIdx == 3">
-              <button class="stepper" @click="stepDate(3, -7)">‹</button>
-              <input id="week_input" type="date" class="tinput" v-model="weekStr"/>
-              <button class="stepper" @click="stepDate(3, 7)">›</button>
-            </div>
-            <!-- 月：文本框 + 便携步进按钮 -->
-            <div class="datebox" v-if="trendModeIdx == 1">
-              <button class="stepper" @click="stepMonth(-1)">‹</button>
-              <input id="month_input" type="month" class="tinput" v-model="monthStr"/>
-              <button class="stepper" @click="stepMonth(1)">›</button>
-            </div>
-            <!-- 年：文本框 + 便携步进按钮 -->
-            <div class="datebox" v-if="trendModeIdx == 2">
-              <button class="stepper" @click="stepYear(-1)">‹</button>
-              <input id="year_input" type="number" class="tinput" v-model="yearNum"
-                     min="2020" max="9999"/>
-              <button class="stepper" @click="stepYear(1)">›</button>
-            </div>
-            <button id="calbtn" class="calbtn" @click="openCal">📅</button>
+        <div class="section flush" style="flex-direction: row; gap: 10px; padding: 0; background: transparent; box-shadow: none; margin-top: -6px;">
+          <!-- 24h 应用活动占比（左侧，与上方 KPI 等宽） -->
+          <div v-if="optAppTrack && apps24h.length" class="section" style="flex:1; padding: 10px 12px; flex-direction: column;">
+            <label class="section-title">24h应用活动占比</label>
+            <ScrollView style="flex-grow: 1; height: 0; margin-top: 6px;">
+              <div v-for="(a, ai) in apps24h" :key="ai" style="flex-direction: row; align-items: center; gap: 6px; height: 28px; flex: none; padding: 2px 4px 2px 0;">
+                <label style="width: 34px; text-align: right; font-size: 12px; color: var(--fg-2); flex: none; white-space: nowrap; margin-left: -8px;">{{ a.p }}%</label>
+                <progressbar class="kt-bar" style="min-width: 40px;" min="0" max="100" :value="a.barW"></progressbar>
+                <label style="width: 96px; text-align: right; font-size: 11px; color: var(--fg); flex-shrink: 1; white-space: nowrap;">{{ a.n }}</label>
+              </div>
+            </ScrollView>
           </div>
-          <custom id="trend_canvas" class="canvas"></custom>
+          <!-- 24h 键鼠活动趋势（右侧） -->
+          <div class="section" style="flex:3.08; padding: 10px 12px; flex-direction: column;">
+            <label class="section-title">24h键鼠活动趋势</label>
+            <custom id="apm_canvas" class="canvas" style="margin-top: 2px;"></custom>
+          </div>
         </div>
       </div>
 
@@ -462,23 +569,29 @@ export default {
         </div>
       </div>
 
-      <!-- 鼠标统计（累计 + 今日） -->
+      <!-- 鼠标统计（左右布局：今日 | 全部累计） -->
       <div v-if="activeView == 'mouse'" class="view">
         <div class="section flush">
           <ScrollView class="scroll-fill">
-            <div class="mouse-grid">
-              <label class="mouse-h">全部累计</label>
-              <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.left, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.left) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.right, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.right) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.mid, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.mid) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.total, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.total) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">移动采样</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.motion, mouseAll.motion)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.motion) }}</label></div>
-              <label class="mouse-h">今日</label>
-              <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.left, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.left) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.right, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.right) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.mid, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.mid) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.total, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.total) }}</label></div>
-              <div class="mouse-row"><label class="mouse-name">移动采样</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(today.motion, today.motion)"></progressbar><label class="mouse-val">{{ fmt(today.motion) }}</label></div>
+            <div class="mouse-grid2">
+              <div class="mouse-col">
+                <label class="mouse-h">今日</label>
+                <div class="mouse-row2"><label class="mouse-name2">左键点击</label><label class="mouse-val2">{{ fmt(mouse.left) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">右键点击</label><label class="mouse-val2">{{ fmt(mouse.right) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">中键点击</label><label class="mouse-val2">{{ fmt(mouse.mid) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">总点击</label><label class="mouse-val2">{{ fmt(mouse.total) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(today.motion) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(today.distCm) }}</label></div>
+              </div>
+              <div class="mouse-col">
+                <label class="mouse-h">全部累计</label>
+                <div class="mouse-row2"><label class="mouse-name2">左键点击</label><label class="mouse-val2">{{ fmt(mouseAll.left) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">右键点击</label><label class="mouse-val2">{{ fmt(mouseAll.right) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">中键点击</label><label class="mouse-val2">{{ fmt(mouseAll.mid) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">总点击</label><label class="mouse-val2">{{ fmt(mouseAll.total) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(mouseAll.motion) }}</label></div>
+                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(total.distCm) }}</label></div>
+              </div>
             </div>
           </ScrollView>
         </div>
@@ -491,41 +604,106 @@ export default {
         </div>
       </div>
 
+      <!-- 历史趋势：本周时段热力(7×24h) + 日/月/年柱状图 -->
+      <div v-if="activeView == 'trend'" class="view">
+        <div class="section flush">
+          <div class="ctrlbar">
+            <div class="modes">
+              <button id="mode_d" :class="trendModeIdx == 0 ? 'mode on' : 'mode'" @click="setMode(0)">日</button>
+              <button id="mode_m" :class="trendModeIdx == 1 ? 'mode on' : 'mode'" @click="setMode(1)">月</button>
+              <button id="mode_y" :class="trendModeIdx == 2 ? 'mode on' : 'mode'" @click="setMode(2)">年</button>
+              <button id="mode_h" :class="trendModeIdx == 4 ? 'mode on' : 'mode'" @click="setMode(4)">本周时段</button>
+            </div>
+            <div class="spacer"></div>
+            <div class="datebox" v-if="trendModeIdx == 0">
+              <button class="stepper" @click="stepDate(0, -1)">‹</button>
+              <input id="date_input" type="date" class="tinput" v-model="dateStr"/>
+              <button class="stepper" @click="stepDate(0, 1)">›</button>
+            </div>
+            <div class="datebox" v-if="trendModeIdx == 4">
+              <button class="stepper" @click="stepDate(4, -7)">‹</button>
+              <input id="week_input" type="date" class="tinput" v-model="weekStr"/>
+              <button class="stepper" @click="stepDate(4, 7)">›</button>
+            </div>
+            <div class="datebox" v-if="trendModeIdx == 1">
+              <button class="stepper" @click="stepMonth(-1)">‹</button>
+              <input id="month_input" type="month" class="tinput" v-model="monthStr"/>
+              <button class="stepper" @click="stepMonth(1)">›</button>
+            </div>
+            <div class="datebox" v-if="trendModeIdx == 2">
+              <button class="stepper" @click="stepYear(-1)">‹</button>
+              <input id="year_input" type="number" class="tinput" v-model="yearNum"
+                     min="2020" max="9999"/>
+              <button class="stepper" @click="stepYear(1)">›</button>
+            </div>
+            <button id="calbtn" class="calbtn" @click="openCal">📅</button>
+          </div>
+          <custom id="trend_canvas" class="canvas"></custom>
+        </div>
+      </div>
+
+      <!-- 设置 -->
+      <div v-if="activeView == 'data'" class="view">
+        <div class="section flush">
+          <ScrollView class="scroll-fill">
+            <div class="mouse-grid">
+              <label class="ab-h2" style="margin-top: 0;">存储</label>
+              <div class="ab-section">
+                <label class="ab-line" style="margin-top: 0;">当前存储：{{ fmtBytes(storage.bytes) }} · {{ storage.days }} 天（{{ storage.first || '—' }} ~ {{ storage.last || '—' }}）</label>
+                <div class="ab-btns data" style="margin-top: 6px;">
+                  <button class="ab-btn" @click="exportData">备份 .kmt</button>
+                  <button class="ab-btn" @click="exportCSV">导出 CSV</button>
+                  <button class="ab-btn" @click="exportJSON">导出 JSON</button>
+                  <button class="ab-btn ghost" @click="importData">导入数据</button>
+                  <button class="ab-btn danger" @click="clearData">清除数据</button>
+                </div>
+              </div>
+
+              <label class="ab-h2">系统选项</label>
+              <div class="ab-section">
+                <div class="ab-btns" style="margin-top: 0; align-items: center;">
+                  <button class="ab-btn" :class="autostart ? '' : 'ghost'" @click="toggleAutostart()">
+                    {{ autostart ? '开机自启：开' : '开机自启：关' }}
+                  </button>
+                  <label class="ab-line" style="margin: 0;">键盘配列：</label>
+                  <button class="laybtn" :class="kbLayout == 0 ? 'on' : ''" @click="kbLayout = 0">108 键</button>
+                  <button class="laybtn" :class="kbLayout == 1 ? 'on' : ''" @click="kbLayout = 1">87 键</button>
+                  <button class="laybtn" :class="kbLayout == 2 ? 'on' : ''" @click="kbLayout = 2">61 键</button>
+                </div>
+              </div>
+
+              <label class="ab-h2">统计选项</label>
+              <div class="ab-section">
+                <div class="ab-btns" style="margin-top: 0; align-items: center;">
+                  <button class="ab-btn" style="width: 122px;" :class="optAppTrack ? '' : 'ghost'" @click="toggleOptApp">
+                    {{ optAppTrack ? '前台应用统计：开' : '前台应用统计：关' }}
+                  </button>
+                  <div v-if="optAppTrack" style="flex-direction: row; gap: 4px; flex-grow: 1;">
+                    <input type="text" class="tinput" style="flex-grow: 1; width: auto;" v-model="excludeStr" placeholder="exe名,逗号分隔"/>
+                    <button class="ab-btn" style="width: 72px;" @click="applyExcl">添加排除</button>
+                  </div>
+                </div>
+                <div v-if="optAppTrack && excludeList.length" style="flex-direction: column; gap: 2px; margin-top: 6px;">
+                  <div v-for="(e, ei) in excludeList" :key="ei" style="flex-direction: row; align-items: center; gap: 4px;">
+                    <label class="ab-line" style="margin: 0; flex-grow: 1;">{{ e }}</label>
+                    <button class="ab-btn ghost" style="width: 44px; padding: 3px 4px; font-size: 11px;" @click="removeExcl(ei)">移除</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </ScrollView>
+        </div>
+      </div>
+
       <!-- 关于 -->
       <div v-if="activeView == 'about'" class="view">
         <div class="section flush">
           <ScrollView class="scroll-fill">
             <div class="mouse-grid">
-            <label class="ab-title">键鼠使用记录 v0.1.0</label>
+            <label class="ab-title">键鼠使用记录 v0.2.0</label>
             <label class="ab-line">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
 
-            <label class="ab-h2" style="margin-top: 16px;">设置</label>
-            <div class="ab-section">
-              <div class="ab-btns" style="margin-top: 0;">
-                <button class="ab-btn" :class="autostart ? '' : 'ghost'" @click="toggleAutostart()">
-                  {{ autostart ? '开机自启：开' : '开机自启：关' }}
-                </button>
-              </div>
-              <label class="ab-line">开机自动启动本程序（需要管理员权限的安装目录可能失效）。</label>
-              <div class="ab-btns">
-                <button class="laybtn" :class="kbLayout == 0 ? 'on' : ''" @click="kbLayout = 0">108 键</button>
-                <button class="laybtn" :class="kbLayout == 1 ? 'on' : ''" @click="kbLayout = 1">87 键</button>
-                <button class="laybtn" :class="kbLayout == 2 ? 'on' : ''" @click="kbLayout = 2">61 键</button>
-              </div>
-              <label class="ab-line">键盘热力图配列：108 全尺寸 / 87 无小键盘 / 61 紧凑（无功能行）。</label>
-            </div>
-
-            <label class="ab-h2">数据管理</label>
-            <div class="ab-section">
-              <div class="ab-btns data" style="margin-top: 0;">
-                <button class="ab-btn" @click="exportData">导出数据</button>
-                <button class="ab-btn ghost" @click="importData">导入数据</button>
-                <button class="ab-btn danger" @click="clearData">清除数据</button>
-              </div>
-              <label class="ab-line">导出当前全部数据为备份文件；导入将覆盖当前全部数据；清除将清空本机全部统计记录。</label>
-            </div>
-
-            <label class="ab-h2">隐私与安全</label>
+            <label class="ab-h2" style="margin-top: 16px;">隐私与安全</label>
             <div class="ab-section">
               <label class="ab-line" style="margin-top: 0;">· 所有数据仅保存在本机（%APPDATA%\KeyMouseTracker），不联网、不上传、无遥测。</label>
               <label class="ab-line">· 仅统计按键 / 点击次数，不记录按键内容与输入序列。</label>
@@ -534,13 +712,13 @@ export default {
 
             <label class="ab-h2">开发信息</label>
             <div class="ab-section">
-              <label class="ab-line" style="margin-top: 0;">作者：Taumata</label>
-              <div class="ab-btns" style="margin-top: 6px;">
+              <div style="flex-direction: row; align-items: center; gap: 8px;">
+                <label class="ab-line" style="margin-top: 0;">作者：Taumata</label>
                 <button class="ab-link" @click="openLink('https://github.com/Taumata-wwq/KeyMouseTracker')">项目 · GitHub</button>
               </div>
               <label class="ab-line">技术栈：C++17 · core-ui（Direct2D / Direct3D）· QuickJS-NG · lunasvg</label>
-              <label class="ab-line">参考引用：</label>
-              <div class="ab-btns" style="margin-top: 4px;">
+              <div style="flex-direction: row; align-items: center; gap: 8px;">
+                <label class="ab-line">参考引用：</label>
                 <button class="ab-link" @click="openLink('https://ghboke.github.io/core-ui/')">core-ui</button>
                 <button class="ab-link" @click="openLink('https://github.com/quickjs-ng/quickjs')">QuickJS-NG</button>
                 <button class="ab-link" @click="openLink('https://github.com/sammycage/lunasvg')">lunasvg</button>
@@ -557,7 +735,7 @@ export default {
     <!-- 日期选择弹窗（按日：月历；按月：年 + 12 月；按年：12 年分页） -->
     <div v-if="calOpen" class="modal" @click="onModalBgClick" @keydown="onModalKeydown">
       <div class="calcard" @click="onCardClick">
-        <div v-if="trendModeIdx == 0 || trendModeIdx == 3">
+        <div v-if="trendModeIdx == 0 || trendModeIdx == 4">
           <div class="calhead">
             <button class="navarrow" @click="calShift(-12)">«</button>
             <button class="navarrow" @click="calShift(-1)">‹</button>
@@ -597,6 +775,36 @@ export default {
                     :class="yy.sel ? 'cal-cell sel' : 'cal-cell'"
                     @click="pickYear(yy.y)">{{ yy.y }}</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 范围选择弹窗（导出 CSV / JSON / 清除数据） -->
+    <div v-if="rangePickOpen" class="rng-modal">
+      <div class="rng-card">
+        <label class="rng-title">{{ rangeKind == 'clear' ? '清除日期范围' : '导出日期范围' }}</label>
+        <label class="rng-hint">{{ rangeKind == 'clear' ? '删除该范围内的全部统计记录（不可恢复）。' : '导出该范围内的数据；任一项为 0 表示该侧不限。' }}</label>
+        <div class="rng-row">
+          <label class="rng-label">起始</label>
+          <div class="rng-date3">
+            <input type="number" class="rng-input num" v-model="rangeStartY" min="0" max="9999"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num sm" v-model="rangeStartM" min="0" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num sm" v-model="rangeStartD" min="0" max="31"/><label class="rng-unit">日</label>
+          </div>
+        </div>
+        <div class="rng-row">
+          <label class="rng-label">结束</label>
+          <div class="rng-date3">
+            <input type="number" class="rng-input num" v-model="rangeEndY" min="0" max="9999"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num sm" v-model="rangeEndM" min="0" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num sm" v-model="rangeEndD" min="0" max="31"/><label class="rng-unit">日</label>
+          </div>
+        </div>
+        <div class="rng-actions">
+          <button class="rng-btn" @click="rangeAll">全部历史</button>
+          <div class="spacer"></div>
+          <button class="rng-btn" @click="cancelRange">取消</button>
+          <button class="rng-btn on" :class="rangeKind == 'clear' ? 'danger' : ''" @click="confirmRange">确定</button>
         </div>
       </div>
     </div>

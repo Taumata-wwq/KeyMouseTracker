@@ -806,8 +806,11 @@ void PageState::ApplyBindingToWidget(Widget* w, const std::string& prop, const u
             // animation, 跟 value 无关), 直接 set 即可, painted 检查无意义.
             slider->SetValue(static_cast<float>(v.ToNumber()));
         } else if (auto* pb = dynamic_cast<ProgressBarWidget*>(w)) {
-            float fv = static_cast<float>(v.ToNumber());
-            painted ? pb->SetValue(fv) : pb->SetValueImmediate(fv);
+            // 进度条数据由高频轮询 (500ms) 驱动, 值变化时若走 SetValue 动画
+            // (300ms EaseOutCubic) 会注册大量动画控件并持续逐帧重绘, 在包含
+            // 上百个进度条的页面 (键盘统计/鼠标统计) 上造成明显卡顿.
+            // 统计型进度条不需要补间动画, 一律立即设置.
+            pb->SetValueImmediate(static_cast<float>(v.ToNumber()));
         } else if (auto* cb = dynamic_cast<CheckBoxWidget*>(w)) {
             bool b = v.ToBool();
             if (cb->Checked() == b) {

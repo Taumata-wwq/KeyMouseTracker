@@ -1396,6 +1396,8 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
              * 合批挂起，必须在退出时重排到位，否则内容停在缩放前的旧尺寸）。 */
             resizeThrottleActive_ = false;
             resizeThrottlePending_ = false;
+            resizeLastSampleTick_ = {};
+            resizeLastSampleW_ = resizeLastSampleH_ = 0;
             KillTimer(hwnd_, kResizeThrottleTimerId);
             OnResize((UINT)clientWidthPx_, (UINT)clientHeightPx_);
         }
@@ -1427,17 +1429,22 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         const UINT sizeH = HIWORD(lParam);
         UpdateClientSizeCache(sizeW, sizeH);
         if (isMoving_ && isResizing_) {
-            /* 交互拖拽期间不逐条同步 OnResize（内含整树 LayoutRoot，滚动/统计页
-             * 每帧重排代价高导致卡顿）。合批：记录待办，由定时器 ~30ms 采样重算
-             * 一次布局 + 立即渲染，画面轻微滞后但明显更跟手。 */
+            /* 交互拖拽期间不逐 WM_SIZE 同步 OnResize（~80Hz 超过刷新率，整树
+             * LayoutRoot 每帧重排+提交会卡顿）。节流 + 立即采样：距上次采样
+             * ≥16ms 时直接在此重排一次（不依赖消息泵调度 WM_TIMER，采样更
+             * 准时、更贴近 60Hz）；未到间隔则挂起，由定时器在窗口边界补一次
+             * trailing 采样，保证合批且提交不超帧率。 */
             maximized_ = (wParam == SIZE_MAXIMIZED);
             UpdateMaxButtonIcon(root_.get(), maximized_);
-            resizeThrottlePending_ = true;
+            if (SampleResizeFrameIfDue()) {
+                resizeThrottlePending_ = false;
+            } else {
+                resizeThrottlePending_ = true;
+            }
             if (!resizeThrottleActive_) {
                 resizeThrottleActive_ = true;
                 SetTimer(hwnd_, kResizeThrottleTimerId, kResizeThrottleMs, nullptr);
             }
-            RequestRenderFrame(FrameReason::Resize, PresentPolicy::Immediate);
             ValidateRect(hwnd_, nullptr);
             return 0;
         }
@@ -1594,14 +1601,16 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (wParam == kResizeThrottleTimerId) {
             if (isMoving_ && isResizing_) {
-                /* 仍在拖拽：按 ~30ms 采样率合批重算一次布局，跟手且不吃满每帧 CPU */
-                resizeThrottlePending_ = true;
-                OnResize((UINT)clientWidthPx_, (UINT)clientHeightPx_);
-                RequestRenderFrame(FrameReason::Resize, PresentPolicy::Immediate);
+                /* 仍在拖拽：兜底补一次采样。若 WM_SIZE 已按节流立即采样过、
+                 * 或尺寸未变 / 未到 16ms 间隔，SampleResizeFrameIfDue 内部会
+                 * 跳过，避免与立即采样叠加造成超帧率提交。 */
+                SampleResizeFrameIfDue();
             } else {
                 /* 已退出拖拽：合批结束，收掉定时器 */
                 resizeThrottleActive_ = false;
                 resizeThrottlePending_ = false;
+                resizeLastSampleTick_ = {};
+                resizeLastSampleW_ = resizeLastSampleH_ = 0;
                 KillTimer(hwnd_, kResizeThrottleTimerId);
             }
             return 0;
@@ -2555,6 +2564,30 @@ void UiWindowImpl::OnResize(UINT width, UINT height) {
                    {TraceU64("w_px", width),
                     TraceU64("h_px", height)});
     }
+}
+
+bool UiWindowImpl::SampleResizeFrameIfDue() {
+    /* 交互缩放节流采样：距上次采样 ≥16ms 且尺寸有变化才重排 + 提交一帧。
+     * 由 WM_SIZE（立即路径）与 kResizeThrottleTimerId（trailing 兜底）共用，
+     * 采样间隔被限制在 ≥16ms，提交率 ~62.5Hz 不超显示器刷新率。 */
+    if (clientWidthPx_ == resizeLastSampleW_ &&
+        clientHeightPx_ == resizeLastSampleH_) {
+        return false;   // 尺寸无变化，无需重复采样
+    }
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    const double elapsedMs =
+        (double)(now.QuadPart - resizeLastSampleTick_.QuadPart) * 1000.0
+        / (double)freq.QuadPart;
+    if (elapsedMs < (double)kResizeThrottleMs) return false;
+    resizeLastSampleTick_ = now;
+    resizeLastSampleW_ = clientWidthPx_;
+    resizeLastSampleH_ = clientHeightPx_;
+    resizeThrottlePending_ = false;
+    OnResize((UINT)clientWidthPx_, (UINT)clientHeightPx_);
+    RequestRenderFrame(FrameReason::Resize, PresentPolicy::Immediate);
+    return true;
 }
 
 void UiWindowImpl::NotifyResizeCallback(UINT width, UINT height) {

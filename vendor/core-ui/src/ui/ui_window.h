@@ -156,6 +156,7 @@ private:
     bool HasAnimationFrameWork() const;
     void PaintAndValidate();
     void OnResize(UINT width, UINT height);
+    bool SampleResizeFrameIfDue();
     void OnDpiChanged(UINT dpi, const RECT* suggested);
     void RefreshClientSizeCache();
     void UpdateClientSizeCache(UINT widthPx, UINT heightPx);
@@ -259,12 +260,17 @@ private:
     bool        windowClosing_ = false;
     bool        isMoving_ = false;   // 窗口正在移动/调整大小
     bool        isResizing_ = false; // 本次 sizemove 是 resize（非纯移动）
-    // 交互缩放合批：暂停每 WM_SIZE 的同步 relayout，由定时器 ~30ms 采样重算，
-    // 避免滚动/统计页在拖拽时每帧做昂贵整树布局导致卡顿。
+    // 交互缩放节流：不逐 WM_SIZE 同步 relayout（~80Hz 超过刷新率），改为
+    // throttle + 立即采样 —— WM_SIZE 内距上次采样 ≥16ms 直接重排一次（不依赖
+    // 消息泵调度 WM_TIMER，采样更准时、更贴近 60Hz）；未到间隔则挂起，由
+    // 定时器在窗口边界补一次 trailing 采样，保证合批且不超帧率提交。
     bool        resizeThrottleActive_ = false;
     bool        resizeThrottlePending_ = false;
+    LARGE_INTEGER resizeLastSampleTick_{};   // 上次采样时刻（高精度）
+    UINT        resizeLastSampleW_ = 0;      // 上次采样尺寸（无变化则跳过采样）
+    UINT        resizeLastSampleH_ = 0;
     static constexpr UINT_PTR kResizeThrottleTimerId = 0x4E53;   // "RS"
-    static constexpr DWORD kResizeThrottleMs = 30;
+    static constexpr DWORD kResizeThrottleMs = 16;
     int         visualUpdateDepth_ = 0;
     bool        visualPaintDirty_ = false;
     bool        visualResizeDirty_ = false;

@@ -445,6 +445,37 @@ private:
     int                   displayListRecorderPauseDepth_ = 0;
     std::unordered_map<ResourceKey, ComPtr<ID2D1Bitmap>, ResourceKeyHash> imageBitmapCache_;
 
+    // 文本测量缓存：DWrite CreateTextLayout + GetMetrics 每次约 0.3-0.6ms。
+    // 布局阶段 SizeHint 会为每个文本节点调一次 MeasureTextWidth/Height，
+    // 无缓存时一次 LayoutRoot 重建几十个 layout（文本页实测 ~15ms）。
+    // 文本内容不变时 DWrite 测量结果恒定，按 (text, size, maxWidth, weight,
+    // family) 缓存；maxWidth < 0 表示宽度测量，>0 表示高度测量。
+    struct TextMeasureKey {
+        std::wstring text;
+        float fontSize = 0.0f;
+        float maxWidth = 0.0f;
+        uint32_t weight = 0;
+        std::wstring family;
+
+        bool operator==(const TextMeasureKey& other) const {
+            return text == other.text && fontSize == other.fontSize &&
+                   maxWidth == other.maxWidth && weight == other.weight &&
+                   family == other.family;
+        }
+    };
+    struct TextMeasureKeyHash {
+        size_t operator()(const TextMeasureKey& k) const {
+            size_t h = std::hash<std::wstring>{}(k.text);
+            h ^= (std::hash<float>{}(k.fontSize) + 0x9e3779b9 + (h << 6) + (h >> 2));
+            h ^= (std::hash<float>{}(k.maxWidth) + 0x9e3779b9 + (h << 6) + (h >> 2));
+            h ^= (std::hash<uint32_t>{}(k.weight) + 0x9e3779b9 + (h << 6) + (h >> 2));
+            h ^= (std::hash<std::wstring>{}(k.family) + 0x9e3779b9 + (h << 6) + (h >> 2));
+            return h;
+        }
+    };
+    mutable std::unordered_map<TextMeasureKey, float, TextMeasureKeyHash> textMeasureCache_;
+    static constexpr size_t kMaxTextMeasureCache = 4096;
+
     // 根据当前 latin/cjk 设置构造 IDWriteFontFallback；如果两个都空则返回 nullptr。
     // 构造后由 Apply... 在 TextFormat3 上 SetFontFallback。
     ComPtr<IDWriteFontFallback> fontFallback_;

@@ -62,7 +62,7 @@ if ($LASTEXITCODE -ne 0) { throw "rc failed ($LASTEXITCODE)" }
     /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DNTDDI_VERSION=0x0A000004 `
     /D_CRT_SECURE_NO_WARNINGS /D_SCL_SECURE_NO_WARNINGS `
     /I "$coreuiSrc\include" /I "$root\src" `
-    src\main.cpp src\data.cpp src\hooks.cpp src\autostart.cpp
+    src\main.cpp src\data.cpp src\hooks.cpp src\autostart.cpp src\export.cpp
 if ($LASTEXITCODE -ne 0) { throw "compile failed ($LASTEXITCODE)" }
 
 # 5) 链接
@@ -73,13 +73,10 @@ $staticLibs = @(
     (Join-Path $buildDir 'third_party\lunasvg\plutovg\plutovg.lib')
 )
 $sysLibs = @(
-    'd2d1.lib','d3d11.lib','dxgi.lib','dxguid.lib','dwrite.lib','dwmapi.lib',
-    'uxtheme.lib','windowscodecs.lib','shlwapi.lib','gdiplus.lib','imm32.lib',
-    'user32.lib','gdi32.lib','shell32.lib','advapi32.lib','comctl32.lib',
-    'ole32.lib','uuid.lib','oleaut32.lib'
+    'd3d11.lib','dxguid.lib','gdiplus.lib','imm32.lib','ole32.lib'
 )
 & link.exe /nologo /SUBSYSTEM:WINDOWS /OUT:KeyMouseTracker.exe /OPT:REF /OPT:ICF `
-    main.obj data.obj hooks.obj autostart.obj app.res `
+    main.obj data.obj hooks.obj autostart.obj export.obj app.res `
     $staticLibs $sysLibs
 if ($LASTEXITCODE -ne 0) { throw "link failed ($LASTEXITCODE)" }
 

@@ -21,3 +21,6 @@ out_manifest_check.xml
 
 # IDE 本地工作/规划文档
 .trae/
+
+# 设计协作可视化会话临时数据
+.superpowers/
