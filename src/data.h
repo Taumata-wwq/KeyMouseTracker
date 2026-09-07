@@ -11,6 +11,15 @@ extern const wchar_t* kAppName;
 constexpr int kHeatW = 48;
 constexpr int kHeatH = 27;
 
+// 单应用在某天的分钟级明细（仅 optAppTrack 开启时记录；稀疏，仅存有活动的分钟/键/格）
+struct AppMinuteData {
+    std::map<uint16_t, std::map<uint8_t, uint32_t>> keyByMinute;     // min -> { vk: 次数 }
+    std::map<uint16_t, std::map<uint32_t, uint32_t>> clickByMinute;  // min -> { 热力格idx: 次数 }
+    std::map<uint16_t, uint16_t> motionByMinute;   // min -> 移动采样次数
+    std::map<uint16_t, uint32_t> movePxByMinute;   // min -> 像素
+    std::map<uint16_t, uint16_t> clickBtnMinute;   // min -> 点击次数
+};
+
 struct DayData {
     uint16_t day = 0;
     uint64_t keys = 0;
@@ -35,6 +44,8 @@ struct DayData {
     std::map<std::string, uint64_t> appCounts;
     uint64_t hourlyKeys[24] = {0};
     uint64_t hourlyClicks[24] = {0};
+    // v11：应用 × 分钟明细（exe → 当日按分钟详录），最细粒度为 (日, 分钟, 应用)
+    std::map<std::string, AppMinuteData> appMin;
 };
 
 struct AppData {
@@ -50,6 +61,7 @@ struct AppData {
     uint32_t lastActivity = 0;
     bool dirty = false;
     bool needsRefresh = false;
+    bool migrated = false;   // v11：旧数据迁移完成标志（一次性，置位后不再重复迁移）
 };
 
 AppData& app();
@@ -72,6 +84,12 @@ void recordKey(uint8_t vk);
 void recordClick(uint8_t btn, LONG x, LONG y);
 void recordMove();
 void recordMoveDist(uint64_t px);
+
+// 聚合助手（供 UI/导出下钻）：统计指定应用在分钟区间内的按键/点击/移动像素。
+// exe 为空串表示汇总全部应用；minStart/minEnd 为闭合区间，<0 表示不限（0..1439）。
+uint64_t appKeys(const DayData& d, const std::string& exe, int minStart, int minEnd);
+uint64_t appClicks(const DayData& d, const std::string& exe, int minStart, int minEnd);
+uint64_t appMotionPx(const DayData& d, const std::string& exe, int minStart, int minEnd);
 
 // 像素 → 厘米（按系统逻辑 DPI 折算，1px = 25.4mm / dpi）。供 UI 与导出共用
 uint64_t distToCm(uint64_t px);

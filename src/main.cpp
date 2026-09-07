@@ -1,6 +1,7 @@
 // 主程序（core-ui 版）：现代界面 + 全局键鼠钩子 + 系统托盘 + 持久化
 #include <ui_core.h>
 #include "data.h"
+#include "timechart.h"   // v0.3.0 统一时间序列图表组件（缩放/平移/十字光标/双轴/平滑）
 #include "hooks.h"
 #include "autostart.h"
 #include "export.h"
@@ -126,6 +127,11 @@ static int g_apmHover = -1;
 static float g_apmHoverX = 0, g_apmHoverY = 0;
 static float g_apmBaseX = 0, g_apmSlot = 0, g_apmTopY = 0, g_apmBotY = 0;    // 绘图区上下边界（y 越界即收起浮窗）
 static size_t g_trN = 0;
+
+// ---- v0.3.0：统一时间序列图（历史视图 日/月/年 模式）----
+static TimeSeriesChart g_trendChart;   // 滚轮缩放/拖拽平移/十字光标/左右双轴
+static bool g_trendChartDirty = true;  // 模式或日期变化后需重建视口（懒重建于首次绘制）
+static std::vector<int> g_overviewSeries;  // 总览叠加系列下标（空=仅 APM 曲线；勾选才画）
 
 // 活跃状态机（TI_ACTIVE 使用）：连续活跃段计时
 static DWORD g_sessionStartTick = 0;   // 当前活跃段起点 tick
@@ -295,9 +301,66 @@ static int jsonInt(const char* json, int fallback) {
     return (int)strtod(json, nullptr);
 }
 
+// ==================== 按应用筛选（v0.3.0） ====================
+// g_filterApp 空串 = 全部应用；非空时热力图/统计表/历史趋势取该应用的全历史
+// per-app 分钟明细（appMin，仅 optAppTrack 开启时有）聚合结果。
+// 性能：全历史遍历只发生在筛选切换/数据更新后（g_filterCacheDirty 置位），
+// 绘制时惰性重建，不做每帧重复遍历；pushStats 以 500ms 节流跟随实时数据增长。
+static std::string g_filterApp;
+static int g_lastFilterCmd = 0;
+static bool g_filterCacheDirty = true;
+static std::map<uint8_t, uint32_t> g_filterKeys;    // 筛选应用全历史按键（按 vk）
+static std::map<uint32_t, uint32_t> g_filterHeat;   // 筛选应用全历史鼠标热力（按格）
+static DWORD g_filterCacheTick = 0;                 // 上次重建时刻（数据增量节流）
+
+static void rebuildFilterCache() {
+    g_filterCacheDirty = false;
+    g_filterCacheTick = GetTickCount();
+    g_filterKeys.clear();
+    g_filterHeat.clear();
+    for (auto& kv : app().days) {
+        auto it = kv.second.appMin.find(g_filterApp);
+        if (it == kv.second.appMin.end()) continue;
+        const AppMinuteData& am = it->second;
+        for (auto& mm : am.keyByMinute)
+            for (auto& kvk : mm.second) g_filterKeys[kvk.first] += kvk.second;
+        for (auto& mm : am.clickByMinute)
+            for (auto& g : mm.second) g_filterHeat[g.first] += g.second;
+    }
+}
+
+// 惰性取数入口：缓存失效时才重建（g_filterApp 变化或数据更新后）
+static const std::map<uint8_t, uint32_t>& keysForApp(const std::string& exe) {
+    if (g_filterCacheDirty) rebuildFilterCache();
+    (void)exe;
+    return g_filterKeys;
+}
+static const std::map<uint32_t, uint32_t>& heatForApp(const std::string& exe) {
+    if (g_filterCacheDirty) rebuildFilterCache();
+    (void)exe;
+    return g_filterHeat;
+}
+
+// 指定应用在 [ms, me) 分钟区间内的活跃分钟数（keyByMinute/clickByMinute/
+// motionByMinute 分钟键并集计数；分钟 0..1439 用位图标记，避免逐分钟遍历）。
+static int appActiveMinutes(const DayData& d, const std::string& exe, int ms, int me) {
+    auto it = d.appMin.find(exe);
+    if (it == d.appMin.end() || me <= ms) return 0;
+    const AppMinuteData& am = it->second;
+    uint64_t bits[23] = {};
+    auto mark = [&](uint16_t m) { if (m < 1440) bits[m >> 6] |= (1ULL << (m & 63)); };
+    for (auto& kv : am.keyByMinute)    if (kv.first >= (uint16_t)ms && kv.first < (uint16_t)me) mark(kv.first);
+    for (auto& kv : am.clickByMinute)  if (kv.first >= (uint16_t)ms && kv.first < (uint16_t)me) mark(kv.first);
+    for (auto& kv : am.motionByMinute) if (kv.first >= (uint16_t)ms && kv.first < (uint16_t)me) mark(kv.first);
+    int n = 0;
+    for (int m = ms; m < me; ++m) if (bits[m >> 6] & (1ULL << (m & 63))) ++n;
+    return n;
+}
+
 // 键盘统计表 JSON：累计按键按次数降序，形如 [{"l":"A","c":123}, ...]
 static std::string buildKeyTableJson() {
-    const auto& kc = cumulativeKeys();
+    // 应用筛选下统计表/明细只含该应用全历史按键
+    const auto& kc = g_filterApp.empty() ? cumulativeKeys() : keysForApp(g_filterApp);
     std::vector<std::pair<uint8_t, uint32_t>> sorted(kc.begin(), kc.end());
     std::sort(sorted.begin(), sorted.end(),
               [](const std::pair<uint8_t, uint32_t>& a, const std::pair<uint8_t, uint32_t>& b) {
@@ -463,6 +526,9 @@ static void pushStats() {
     if (!g_page) return;
     g_lastPushTick = GetTickCount();   // 所有调用路径共享同一节流窗口
     ensureCurDay();
+    // 应用筛选聚合缓存：实时数据持续增长，最多每 500ms 失效一次（绘制时惰性重建）
+    if (!g_filterApp.empty() && GetTickCount() - g_filterCacheTick >= 500)
+        g_filterCacheDirty = true;
     bool changed = false;
     changed |= pushKeyIfChanged("pausedS",     app().paused ? "true" : "false");
     changed |= pushKeyIfChanged("autostartS",  IsAutoStart() ? "true" : "false");
@@ -673,7 +739,8 @@ static std::wstring widen(const std::string& s) {
 // 颜色归一化排除已隐藏按键 —— 隐藏/恢复后其余按键热度立即重新分配色阶。
 // 绘制时把布局参数写入全局缓存，供鼠标回调换算坐标。
 static void KeyHeatDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
-    const auto& kc = cumulativeKeys();  
+    // 应用筛选：空串走全局累计缓存（零成本），非空走该应用全历史聚合（惰性重建）
+    const auto& kc = g_filterApp.empty() ? cumulativeKeys() : keysForApp(g_filterApp);
     bool dark = (ui_theme_get_mode() == UI_THEME_DARK);
 
     float pad = 12.0f;
@@ -820,8 +887,9 @@ static int onKeyHeatMove(UiWidget w, float x, float y, int btn, void*) {
     }
     if (!kd) { ui_widget_set_tooltip(w, nullptr); return 0; }
     uint32_t c = 0;
-    auto it = cumulativeKeys().find(kd->vk);
-    if (it != cumulativeKeys().end()) c = it->second;
+    const auto& kc = g_filterApp.empty() ? cumulativeKeys() : keysForApp(g_filterApp);
+    auto it = kc.find(kd->vk);
+    if (it != kc.end()) c = it->second;
     wchar_t buf[96];
     bool hidden = app().hiddenKeys.count(kd->vk) > 0;
     _snwprintf_s(buf, _TRUNCATE, L"%s%s：累计 %u 次%s",
@@ -852,7 +920,8 @@ static void onKeyHeatLeave(UiWidget w, void*) {
 
 // 鼠标热力图：点击位置累计热力，悬停显示次数，无图例。
 static void MouseHeatDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
-    const auto& heat = cumulativeHeat();
+    // 应用筛选：空串走全局累计热力缓存，非空走该应用全历史聚合（惰性重建）
+    const auto& heat = g_filterApp.empty() ? cumulativeHeat() : heatForApp(g_filterApp);
     std::vector<uint32_t> samples;
     samples.reserve(heat.size());
     for (auto& kv : heat) if (kv.second > 0) samples.push_back(kv.second);
@@ -975,7 +1044,283 @@ static void resolveTrendRange(int& y, int& m, int& d) {
     if (g_trendMode == 2) { m = 1; d = 1; } // 按年只取 y
 }
 
+// ==================== v0.3.0：统一时间序列图（历史视图 日/月/年） ====================
+
+// 按当前模式/日期重建图表视口（模式或日期变化时置 dirty，首次绘制时懒重建）
+static void trendChartResetViewport() {
+    int y = 0, m = 0, d = 0;
+    resolveTrendRange(y, m, d);
+    double t0 = 0; double spanM = 1440.0;
+    if (g_trendMode == 0) {                 // 按日：0-24 时（可下钻到 1min）
+        int base = dayIndexFromYMD(y, m, d);
+        t0 = (double)base * 1440.0; spanM = 1440.0;
+    } else if (g_trendMode == 1) {          // 按月：该月全部日期（1 日桶）
+        int s = dayIndexFromYMD(y, m, 1);
+        t0 = (double)s * 1440.0; spanM = (double)daysInMonth(y, m) * 1440.0;
+    } else {                                // 按年：全年（30 日桶 → 12~13 桶）
+        int s = dayIndexFromYMD(y, 1, 1);
+        int e = dayIndexFromYMD(y, 12, 31);
+        t0 = (double)s * 1440.0; spanM = (double)(e - s + 1) * 1440.0;
+    }
+    g_trendChart.setDataRange(t0, t0 + spanM);
+    g_trendChart.tStart = g_trendChart.targetT = t0;
+    g_trendChart.span = g_trendChart.targetSpan = spanM;
+    g_trendChart.animating = false;
+    g_trendChart.cacheValid = false;
+    g_trendChart.hoverBucket = -1; g_trendChart.hoverActive = false;
+    g_trendChart.dragging = false;
+}
+
+// TimeSeriesChart 取数回调：把原始数据按当前桶宽 bw 聚合到可见区间
+// 桶 = 全局分钟 [ (first+b)*bw, (first+b+1)*bw )。整日桶走日汇总头（O(1)），
+// 局部桶走分钟明细（keyMinuteActivity/clickMinuteActivity/minuteActivity，均与
+// optAppTrack 无关、可靠）；无分钟明细的旧数据按 hourlyKeys/hourlyClicks 比例均摊。
+// 里程无全局分钟明细，仅 appMin（optAppTrack 开启）有值。只扫描可见区间。
+static void trendChartFill(int bw, int64_t firstBucket, int count,
+                           std::vector<TSSeries>& out, void*) {
+    const int64_t dayM = 1440;
+    int64_t dayLo = (int64_t)(g_trendChart.dataMin / dayM);
+    int64_t dayHi = (int64_t)((g_trendChart.dataMax - 1) / dayM);
+    std::vector<uint64_t> k((size_t)count, 0), c((size_t)count, 0),
+                          m((size_t)count, 0), a((size_t)count, 0);
+    // 应用筛选：g_filterApp 非空时全部桶改取该应用 appMin 分钟明细聚合
+    const std::string& fexe = g_filterApp;
+    for (int b = 0; b < count; ++b) {
+        int64_t g0 = (firstBucket + (int64_t)b) * (int64_t)bw;
+        int64_t g1 = g0 + bw;
+        int64_t d0 = g0 / dayM, d1 = (g1 - 1) / dayM;
+        if (d0 < dayLo) d0 = dayLo;
+        if (d1 > dayHi) d1 = dayHi;
+        for (int64_t di = d0; di <= d1; ++di) {
+            auto it = app().days.find((uint16_t)di);
+            if (it == app().days.end()) continue;
+            const DayData& dd = it->second;
+            int ms = (int)(g0 - di * dayM), me = (int)(g1 - di * dayM);
+            if (ms <= 0 && me >= 1440) {
+                // 整日桶：直接取日汇总头；筛选时改取该应用当天空聚合
+                if (fexe.empty()) {
+                    k[b] += dd.keys; c[b] += dd.clicks;
+                    m[b] += dd.distPx;
+                    a[b] += dd.activeSec / 60;
+                } else {
+                    k[b] += appKeys(dd, fexe, 0, 1439);
+                    c[b] += appClicks(dd, fexe, 0, 1439);
+                    m[b] += appMotionPx(dd, fexe, 0, 1439);
+                    a[b] += appActiveMinutes(dd, fexe, 0, 1440);
+                }
+            } else {
+                if (ms < 0) ms = 0; if (me > 1440) me = 1440;
+                if (fexe.empty()) {
+                    uint64_t sk = 0, sc = 0, sa = 0;
+                    auto itk = dd.keyMinuteActivity.lower_bound((uint16_t)ms);
+                    for (; itk != dd.keyMinuteActivity.end() && itk->first < me; ++itk) sk += itk->second;
+                    auto itc = dd.clickMinuteActivity.lower_bound((uint16_t)ms);
+                    for (; itc != dd.clickMinuteActivity.end() && itc->first < me; ++itc) sc += itc->second;
+                    if (dd.keyMinuteActivity.empty() && dd.clickMinuteActivity.empty()) {
+                        // 无分钟明细的旧数据：按小时比例均摊（忠实 hourlyKeys/hourlyClicks）
+                        int h0 = ms / 60, h1 = (me - 1) / 60;
+                        for (int h = h0; h <= h1; ++h) {
+                            if (h < 0 || h > 23) continue;
+                            int hs = h * 60, he = hs + 60;
+                            int os = ms > hs ? ms : hs, oe = me < he ? me : he;
+                            if (oe > os) {
+                                if (dd.hourlyKeys[h]) sk += dd.hourlyKeys[h] * (uint64_t)(oe - os) / 60;
+                                if (dd.hourlyClicks[h]) sc += dd.hourlyClicks[h] * (uint64_t)(oe - os) / 60;
+                            }
+                        }
+                    }
+                    auto ita = dd.minuteActivity.lower_bound((uint16_t)ms);
+                    for (; ita != dd.minuteActivity.end() && ita->first < me; ++ita) ++sa;  // 活跃分钟数
+                    k[b] += sk; c[b] += sc;
+                    m[b] += appMotionPx(dd, "", ms, me - 1);   // 仅 appMin（optAppTrack 开启）有值
+                    a[b] += sa;
+                } else {
+                    // 按应用：仅遍历该应用 appMin 分钟明细（optAppTrack 开启/迁移后均有）
+                    auto itm = dd.appMin.find(fexe);
+                    if (itm != dd.appMin.end()) {
+                        const AppMinuteData& am = itm->second;
+                        for (auto& mm : am.keyByMinute)
+                            if (mm.first >= (uint16_t)ms && mm.first < (uint16_t)me)
+                                for (auto& kv : mm.second) k[b] += kv.second;
+                        for (auto& mm : am.clickByMinute)
+                            if (mm.first >= (uint16_t)ms && mm.first < (uint16_t)me)
+                                for (auto& g : mm.second) c[b] += g.second;
+                        m[b] += appMotionPx(dd, fexe, ms, me - 1);
+                        a[b] += appActiveMinutes(dd, fexe, ms, me);
+                    }
+                }
+            }
+        }
+    }
+    out.clear();
+    // uint64 累计 → float 桶值（显式转换，避免 C4244 噪音；显示精度足够）
+    TSSeries s;
+    auto toFloats = [](const std::vector<uint64_t>& src) {
+        std::vector<float> f; f.reserve(src.size());
+        for (uint64_t v : src) f.push_back((float)v);
+        return f;
+    };
+    s.name = L"按键"; s.axis = 0; s.color = rgb255(47, 110, 242); s.v = toFloats(k); out.push_back(s);
+    s.name = L"点击"; s.axis = 0; s.color = rgb255(58, 199, 242); s.v = toFloats(c); out.push_back(s);
+    s.name = L"里程"; s.axis = 1; s.color = rgb255(82, 204, 130); s.v = toFloats(m); out.push_back(s);
+    s.name = L"活跃"; s.axis = 0; s.color = rgb255(245, 158, 70); s.v = toFloats(a); out.push_back(s);
+}
+
+// 日/月/年 统一可缩放图表：懒重建视口后委托组件绘制
+static void trendChartDraw(UiDrawCtx ctx, UiRect rect) {
+    if (g_trendChartDirty) {
+        trendChartResetViewport();
+        g_trendChartDirty = false;
+    }
+    if (!g_trendChart.fill) {
+        g_trendChart.fill = trendChartFill;
+        g_trendChart.ud = nullptr;
+        if (g_trendChart.enabled.empty())
+            g_trendChart.enabled = { 0, 1 };   // 默认仅显示 按键+点击（UI trendSeries 轮询会覆盖）
+    }
+    g_trendChart.draw(ctx, rect, ui_theme_get_mode() == UI_THEME_DARK);
+}
+
+// ==================== v0.3.0：时段热力 单日 12×30 ====================
+// 12 列 = 每 2 小时一段（0-2h, 2-4h, ... 22-24h），30 行 = 每 4 分钟一格（120min/30）
+static void trendHeatDraw12x30(UiDrawCtx ctx, UiRect rect) {
+    bool dark = (ui_theme_get_mode() == UI_THEME_DARK);
+    UiColor axisCol = dark ? rgb255(120, 126, 136) : rgb255(138, 145, 157);
+
+    int y = 0, m = 0, d = 0;
+    resolveTrendRange(y, m, d);
+    int base = dayIndexFromYMD(y, m, d);
+    auto it = app().days.find((uint16_t)base);
+
+    // 单遍聚合 360 格：cellIdx = 段(12) * 30 + 行(30)，数据源 = 所选日分钟明细
+    // 应用筛选（g_filterApp 非空）时改取该应用 appMin 分钟明细
+    std::vector<uint64_t> cellK(360, 0), cellC(360, 0);
+    if (it != app().days.end()) {
+        const DayData& dd = it->second;
+        if (g_filterApp.empty()) {
+            for (auto& kv : dd.keyMinuteActivity) {
+                int mn = kv.first; if (mn > 1439) continue;
+                cellK[(mn / 120) * 30 + (mn % 120) / 4] += kv.second;
+            }
+            for (auto& kv : dd.clickMinuteActivity) {
+                int mn = kv.first; if (mn > 1439) continue;
+                cellC[(mn / 120) * 30 + (mn % 120) / 4] += kv.second;
+            }
+        } else {
+            auto am = dd.appMin.find(g_filterApp);
+            if (am != dd.appMin.end()) {
+                for (auto& mm : am->second.keyByMinute) {
+                    int mn = mm.first; if (mn > 1439) continue;
+                    int cell = (mn / 120) * 30 + (mn % 120) / 4;
+                    for (auto& kv : mm.second) cellK[cell] += kv.second;
+                }
+                for (auto& mm : am->second.clickByMinute) {
+                    int mn = mm.first; if (mn > 1439) continue;
+                    int cell = (mn / 120) * 30 + (mn % 120) / 4;
+                    for (auto& g : mm.second) cellC[cell] += g.second;
+                }
+            }
+        }
+    }
+
+    // 归一化（与 7×24 一致：可见非零 min..max 之间 log 插值）
+    uint32_t hmn = 1, hmx = 1;
+    {
+        bool first = true;
+        for (int i = 0; i < 360; ++i) {
+            uint32_t v = (uint32_t)(cellK[i] + cellC[i]);
+            if (v == 0) continue;
+            if (first) { hmn = hmx = v; first = false; }
+            else { if (v > hmx) hmx = v; if (v < hmn) hmn = v; }
+        }
+        if (hmx == 0) hmx = 1;
+        if (hmn == 0) hmn = 1;
+    }
+
+    float pl = 30, pr = 8, pt = 12, pb = 24;
+    float cw = (rect.right - rect.left) - pl - pr;
+    float ch = (rect.bottom - rect.top) - pt - pb;
+    if (cw <= 10 || ch <= 10) return;
+    const float cols = 12.0f, rows = 30.0f;
+    float cellW = cw / cols, cellH = ch / rows;
+    if (cellW <= 1 || cellH <= 1) return;
+    float ox = rect.left + pl, oy = rect.top + pt;
+    float gw = cellW * cols, gh = cellH * rows;
+
+    // 网格底色
+    ui_draw_fill_rect(ctx, UiRect{ ox, oy, ox + gw, oy + gh },
+                      dark ? rgb255(34, 38, 45) : rgb255(222, 227, 234));
+    float gap = std::max(0.5f, std::min(cellW, cellH) * 0.08f);
+    for (int i = 0; i < 360; ++i) {
+        int col = i / 30, row = i % 30;
+        float gx = ox + col * cellW + gap;
+        float gy = oy + row * cellH + gap;
+        float gwc = cellW - gap * 2, ghc = cellH - gap * 2;
+        if (gwc <= 1 || ghc <= 1) continue;
+        uint64_t sum = cellK[i] + cellC[i];
+        UiColor colr = sum > 0
+            ? heatColor(heatT((uint32_t)sum, hmn, hmx), dark)
+            : (dark ? rgb255(40, 44, 52) : rgb255(243, 246, 249));
+        float r = 2.0f; if (r > gwc * 0.3f) r = gwc * 0.3f; if (r > ghc * 0.3f) r = ghc * 0.3f;
+        ui_draw_fill_rounded_rect(ctx, UiRect{ gx, gy, gx + gwc, gy + ghc }, r, r, colr);
+    }
+
+    // 左侧行标签：每 5 行标一次（段内偏移 0:00 / 0:20 / ... / 1:40）
+    {
+        static const wchar_t* rowLb[6] = { L"0:00", L"0:20", L"0:40", L"1:00", L"1:20", L"1:40" };
+        float labelRight = ox - 4;
+        for (int r = 0; r < 30; r += 5) {
+            std::wstring wl = rowLb[r / 5];
+            float tw = ui_draw_measure_text(ctx, wl.c_str(), 9) + 2;
+            UiRect lr = { labelRight - tw, oy + r * cellH, labelRight, oy + (r + 1) * cellH };
+            ui_draw_text_ex(ctx, wl.c_str(), lr, axisCol, 9, 2, 0);
+        }
+    }
+    // 底部列标签：每 2 小时一段
+    float labBase = oy + gh + 4;
+    for (int c = 0; c < 12; ++c) {
+        wchar_t hb[12];
+        _snwprintf_s(hb, _TRUNCATE, L"%d时", c * 2);
+        UiRect lr = { ox + c * cellW, labBase, ox + c * cellW + cellW, labBase + 14 };
+        ui_draw_text_ex(ctx, hb, lr, axisCol, 9, 0, 0);
+    }
+
+    // 悬停几何缓存（列宽 = 2h 槽宽；360 格）
+    g_trBaseX = ox; g_trSlot = cellW; g_trN = 360;
+    g_trTopY = oy; g_trBotY = oy + gh;
+
+    // 悬浮浮窗：段-分钟 时间与数值
+    if (g_trHover >= 0 && g_trHover < 360) {
+        int col = g_trHover / 30, row = g_trHover % 30;
+        int m0 = col * 120 + row * 4;
+        int m1 = m0 + 4;
+        wchar_t tbh[32], tb[64];
+        _snwprintf_s(tbh, _TRUNCATE, L"%02d:%02d-%02d:%02d",
+                     m0 / 60, m0 % 60, m1 / 60, m1 % 60);
+        _snwprintf_s(tb, _TRUNCATE, L"按键 %llu · 点击 %llu",
+                     (unsigned long long)cellK[g_trHover], (unsigned long long)cellC[g_trHover]);
+        float tw1 = ui_draw_measure_text(ctx, tbh, 12);
+        float tw2 = ui_draw_measure_text(ctx, tb, 12);
+        float tw = tw1 > tw2 ? tw1 : tw2;
+        float bw2 = tw + 20, bh = 36;
+        float by = g_trHoverY - bh - 8; if (by < rect.top) by = g_trHoverY + 12;
+        float bx = g_trHoverX - bw2 - 10; if (bx < rect.left) bx = g_trHoverX + 10;
+        UiRect br = { bx, by, bx + bw2, by + bh };
+        ui_draw_fill_rounded_rect(ctx, br, 5.0f, 5.0f, rgb255(24, 26, 31, 235));
+        ui_draw_rounded_rect(ctx, br, 5.0f, 5.0f, rgb255(120, 126, 136, 120), 1.0f);
+        ui_draw_text_ex(ctx, tbh, UiRect{ br.left + 10, br.top + 2, br.right - 4, br.top + 16 },
+                        rgb255(255, 255, 255), 12, 2, 0);
+        ui_draw_text_ex(ctx, tb, UiRect{ br.left + 10, br.top + 16, br.right - 4, br.bottom - 2 },
+                        rgb255(255, 255, 255), 12, 2, 0);
+    }
+}
+
 static void TrendDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
+    // v0.3.0：日/月/年 三模式升级为统一可缩放时间序列图（滚轮缩放/拖拽平移/十字光标/双轴）
+    if (g_trendMode >= 0 && g_trendMode <= 2) { trendChartDraw(ctx, rect); return; }
+    // v0.3.0：单日 12×30 时段热力（12 段 × 每 4 分钟一格）
+    if (g_trendMode == 5) { trendHeatDraw12x30(ctx, rect); return; }
+    // 以下为既有实现：按周柱状（3）与 一周×24h 时段热力（4）
     auto& days = app().days;
     bool dark = (ui_theme_get_mode() == UI_THEME_DARK);
 
@@ -1028,8 +1373,21 @@ static void TrendDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
             auto it = days.find((uint16_t)(base + i / 24));
             int h = i % 24;
             if (it != days.end()) {
-                p.k = it->second.hourlyKeys[h];
-                p.c = it->second.hourlyClicks[h];
+                if (g_filterApp.empty()) {
+                    p.k = it->second.hourlyKeys[h];
+                    p.c = it->second.hourlyClicks[h];
+                } else {
+                    // 按应用：该日该小时从该应用 appMin 分钟明细聚合
+                    auto am = it->second.appMin.find(g_filterApp);
+                    if (am != it->second.appMin.end()) {
+                        for (auto& mm : am->second.keyByMinute)
+                            if (mm.first / 60 == h)
+                                for (auto& kv : mm.second) p.k += kv.second;
+                        for (auto& mm : am->second.clickByMinute)
+                            if (mm.first / 60 == h)
+                                for (auto& g : mm.second) p.c += g.second;
+                    }
+                }
             }
             snprintf(lbuf, sizeof(lbuf), "%s %02d时", wd[i / 24], h);
             p.label = lbuf;
@@ -1211,17 +1569,22 @@ static void TrendDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
     }
 }
 
-// 总览近24小时强度曲线（每 10 分钟聚合键+点击，144 点折线）
+// 总览近24小时强度曲线（每 10 分钟聚合键+点击，144 点折线）。
+// v0.3.0 T7：勾选 overviewSeries 时叠加「按键/点击/里程/活跃」折线（与 APM 同 24h 窗口；
+// 按键/点击/活跃 走左轴，里程量纲不同走右轴）；未勾选时仅 APM 曲线，外观与旧版一致。
 static void ApmDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
     auto& days = app().days;
     bool dark = (ui_theme_get_mode() == UI_THEME_DARK);
     UiColor axisCol = dark ? rgb255(120, 126, 136) : rgb255(138, 145, 157);
 
     const int segs = 144;
-    std::vector<uint64_t> agg(segs, 0);
-    std::vector<uint64_t> aggK(segs, 0);
-    std::vector<uint64_t> aggC(segs, 0);
-    uint64_t amax = 1;
+    std::vector<uint64_t> agg(segs, 0);    // 键+点击（APM 主曲线）
+    std::vector<uint64_t> aggK(segs, 0);   // 按键
+    std::vector<uint64_t> aggC(segs, 0);   // 点击
+    std::vector<uint64_t> aggM(segs, 0);   // 里程（像素）
+    std::vector<uint64_t> aggA(segs, 0);   // 活跃分钟
+    uint64_t amax = 1, aMax2 = 1, mmax = 1;
+    uint64_t yDist = 0, tDist = 0, yMoveTot = 0, tMoveTot = 0, yDayTot = 0, tDayTot = 0;
 
     SYSTEMTIME st;
     GetLocalTime(&st);
@@ -1232,54 +1595,117 @@ static void ApmDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
     int todayIdx = dayIndexFromYMD(ty, tm, td);
     int yesterdayIdx = todayIdx - 1;
 
-    // 昨天 nowSeg+1..143 → agg[0..142-nowSeg]，今天 0..nowSeg → agg[143-nowSeg..143]
+    // 昨天 nowSeg+1..143 → idx 0..142-nowSeg，今天 0..nowSeg → idx 143-nowSeg..143
     auto yit = days.find((uint16_t)yesterdayIdx);
     if (yit != days.end()) {
-        for (auto& kv : yit->second.minuteActivity) {
+        const DayData& yd = yit->second;
+        yDist = yd.distPx;
+        for (auto& kv : yd.minuteActivity) {
+            yDayTot += kv.second;          // 全天强度（里程回退分摊基数）
             int s = kv.first / 10;
             if (s > nowSeg && s < 144) {
                 int idx = s - nowSeg - 1;
                 if (idx >= 0 && idx < segs) { agg[idx] += kv.second; if (agg[idx] > amax) amax = agg[idx]; }
+                ++aggA[idx];
             }
         }
-        for (auto& kv : yit->second.keyMinuteActivity) {
+        for (auto& kv : yd.keyMinuteActivity) {
             int s = kv.first / 10;
             if (s > nowSeg && s < 144) { int idx = s - nowSeg - 1; if (idx >= 0 && idx < segs) aggK[idx] += kv.second; }
         }
-        for (auto& kv : yit->second.clickMinuteActivity) {
+        for (auto& kv : yd.clickMinuteActivity) {
             int s = kv.first / 10;
             if (s > nowSeg && s < 144) { int idx = s - nowSeg - 1; if (idx >= 0 && idx < segs) aggC[idx] += kv.second; }
         }
+        for (auto& ap : yd.appMin)          // 里程：appMin 分钟像素（仅 optAppTrack 开启有值）
+            for (auto& kv : ap.second.movePxByMinute) {
+                yMoveTot += kv.second;
+                int s = kv.first / 10;
+                if (s > nowSeg && s < 144) { int idx = s - nowSeg - 1; if (idx >= 0 && idx < segs) aggM[idx] += kv.second; }
+            }
     }
     auto tit = days.find((uint16_t)todayIdx);
     if (tit != days.end()) {
-        for (auto& kv : tit->second.minuteActivity) {
+        const DayData& td2 = tit->second;
+        tDist = td2.distPx;
+        for (auto& kv : td2.minuteActivity) {
+            tDayTot += kv.second;
             int s = kv.first / 10;
             if (s <= nowSeg) {
                 int idx = (143 - nowSeg) + s;
                 if (idx >= 0 && idx < segs) { agg[idx] += kv.second; if (agg[idx] > amax) amax = agg[idx]; }
+                ++aggA[idx];
             }
         }
-        for (auto& kv : tit->second.keyMinuteActivity) {
+        for (auto& kv : td2.keyMinuteActivity) {
             int s = kv.first / 10;
             if (s <= nowSeg) { int idx = (143 - nowSeg) + s; if (idx >= 0 && idx < segs) aggK[idx] += kv.second; }
         }
-        for (auto& kv : tit->second.clickMinuteActivity) {
+        for (auto& kv : td2.clickMinuteActivity) {
             int s = kv.first / 10;
             if (s <= nowSeg) { int idx = (143 - nowSeg) + s; if (idx >= 0 && idx < segs) aggC[idx] += kv.second; }
         }
+        for (auto& ap : td2.appMin)
+            for (auto& kv : ap.second.movePxByMinute) {
+                tMoveTot += kv.second;
+                int s = kv.first / 10;
+                if (s <= nowSeg) { int idx = (143 - nowSeg) + s; if (idx >= 0 && idx < segs) aggM[idx] += kv.second; }
+            }
     }
 
-    float pl = 16, pr = 6, pt = 16, pb = 20;
+    // 里程回退：无 appMin 分钟像素（optAppTrack 关闭/开启前记录）时，
+    // 按各段全天 APM 强度比例分摊当日 distPx（仅窗口内可见段取值）
+    if (yMoveTot == 0 && yDist > 0 && yDayTot > 0)
+        for (int i = 0; i < 143 - nowSeg; ++i) aggM[i] = (uint64_t)((double)yDist * (double)agg[i] / (double)yDayTot);
+    if (tMoveTot == 0 && tDist > 0 && tDayTot > 0)
+        for (int i = 143 - nowSeg; i < segs; ++i) aggM[i] = (uint64_t)((double)tDist * (double)agg[i] / (double)tDayTot);
+    uint64_t kMax = 0, cMax = 0;
+    for (int i = 0; i < segs; ++i) {
+        if (aggM[i] > mmax) mmax = aggM[i];
+        if (aggA[i] > aMax2) aMax2 = aggA[i];
+        if (aggK[i] > kMax) kMax = aggK[i];
+        if (aggC[i] > cMax) cMax = aggC[i];
+    }
+
+    // 勾选状态（系列下标；空 = 仅 APM 曲线）
+    auto has = [](int i) {
+        return std::find(g_overviewSeries.begin(), g_overviewSeries.end(), i) != g_overviewSeries.end();
+    };
+    bool kEn = has(0), cEn = has(1), mEn = has(2), aEn = has(3);
+    bool anySeries = kEn || cEn || mEn || aEn;
+    // 叠加系列开启时预留左右轴标签宽度；未开启时保持旧布局
+    float pl = anySeries ? 40.0f : 16.0f;
+    float pr = mEn ? 42.0f : 6.0f;
+    float pt = 16, pb = 20;
     float cw = (rect.right - rect.left) - pl - pr;
     float ch = (rect.bottom - rect.top) - pt - pb;
     if (cw <= 0 || ch <= 0) return;
     float baseX = rect.left + pl, baseY = rect.top + pt + ch;
 
+    // 左轴上限：APM 主曲线与勾选的左轴系列取大（按键/点击计数）
+    double leftMax = (double)amax;
+    if (kEn && (double)kMax > leftMax) leftMax = (double)kMax;
+    if (cEn && (double)cMax > leftMax) leftMax = (double)cMax;
+    if (leftMax < 1.0) leftMax = 1.0;
+    // 右轴上限：里程与活跃（活跃分钟数与里程同属右轴量纲）
+    double rightMax = (double)mmax;
+    if (aEn && (double)aMax2 > rightMax) rightMax = (double)aMax2;
+    if (rightMax < 1.0) rightMax = 1.0;
+
     UiColor gridCol = dark ? rgb255(52, 57, 66) : rgb255(238, 241, 245);
     for (int g = 0; g <= 3; ++g) {
         float gy = baseY - ch * g / 3.0f;
         ui_draw_line(ctx, baseX, gy, baseX + cw, gy, gridCol, 1.0f);
+        if (anySeries) {   // 左轴数值标签（叠加开启时）
+            wchar_t lb[24];
+            _snwprintf_s(lb, 24, L"%s", tsFmtNum(leftMax * g / 3.0).c_str());
+            ui_draw_text_ex(ctx, lb, UiRect{ rect.left + 2, gy - 5, baseX - 2, gy + 7 }, axisCol, 9, 2, 0);
+        }
+        if (mEn) {         // 右轴数值标签（里程勾选时）
+            wchar_t lb[24];
+            _snwprintf_s(lb, 24, L"%s", tsFmtNum(rightMax * g / 3.0).c_str());
+            ui_draw_text_ex(ctx, lb, UiRect{ baseX + cw + 2, gy - 5, rect.right - 2, gy + 7 }, axisCol, 9, 0, 0);
+        }
     }
     ui_draw_line(ctx, baseX, baseY, baseX + cw, baseY, gridCol, 1.0f);
 
@@ -1296,6 +1722,21 @@ static void ApmDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
 
     g_apmBaseX = baseX; g_apmSlot = cw / segs;
     g_apmTopY = rect.top + pt; g_apmBotY = baseY;
+
+    // 叠加折线（先画勾选系列，再画 APM 主曲线压顶，保持主曲线可读）
+    auto drawSeries = [&](const std::vector<uint64_t>& v, double maxV, UiColor col) {
+        float prevX = baseX, prevY = -1;
+        for (int i = 0; i < segs; ++i) {
+            float fx = baseX + cw * ((i + 0.5f) / segs);
+            float fy = baseY - ch * ((float)v[i] / (float)maxV);
+            if (i > 0 && prevY >= 0) ui_draw_line(ctx, prevX, prevY, fx, fy, col, 1.5f);
+            prevX = fx; prevY = fy;
+        }
+    };
+    if (kEn) drawSeries(aggK, leftMax, rgb255(47, 110, 242));    // 按键（左轴）
+    if (cEn) drawSeries(aggC, leftMax, rgb255(58, 199, 242));    // 点击（左轴）
+    if (mEn) drawSeries(aggM, rightMax, rgb255(82, 204, 130));   // 里程（右轴）
+    if (aEn) drawSeries(aggA, rightMax, rgb255(245, 158, 70));    // 活跃（右轴）
 
     if (amax > 1) {
         UiColor lineCol = rgb255(63, 120, 244);
@@ -1346,16 +1787,36 @@ static void ApmDraw(UiWidget, UiDrawCtx ctx, UiRect rect, void*) {
     }
 }
 
-// 趋势图悬停：换算鼠标 x → 柱下标，更新悬浮浮窗；越界/离开时清除
+// 趋势图悬停：日/月/年 走 TimeSeriesChart 拖拽/十字光标；热力/柱状换算格下标；越界/离开时清除
 static int onTrendMove(UiWidget, float x, float y, int, void*) {
+    // v0.3.0：统一时间序列图模式 —— 拖拽平移优先，其次十字光标悬停
+    if (g_trendMode >= 0 && g_trendMode <= 2) {
+        if (g_trendChart.dragging) {
+            bool inside = x >= g_trendChart.plotX0 && x <= g_trendChart.plotX1 &&
+                          y >= g_trendChart.plotY0 && y <= g_trendChart.plotY1;
+            g_trendChart.onDrag(x, inside);
+            if (g_win) ui_window_invalidate(g_win);
+        } else {
+            bool ch = g_trendChart.onMoveInside(x, y);
+            if (ch && g_win) ui_window_invalidate(g_win);
+        }
+        return 0;
+    }
     int idx = -1;
     if (g_trN > 0 && g_trSlot > 0 && x >= g_trBaseX && y >= g_trTopY && y <= g_trBotY) {
         if (g_trendMode == 4) {
-            // 时段热力：7行×24列，行列都要参与索引计算
+            // 一周×24h 时段热力：7行×24列，行列都要参与索引计算
             float cellH = (g_trBotY - g_trTopY) / 7.0f;
             int col = (int)((x - g_trBaseX) / g_trSlot);
             int row = (int)((y - g_trTopY) / cellH);
             if (col >= 0 && col < 24 && row >= 0 && row < 7) idx = row * 24 + col;
+        } else if (g_trendMode == 5) {
+            // 单日 12×30 时段热力：12列（2h/段）×30行（4min/格）
+            // 索引布局与绘制一致：idx = col*30 + row（col=段0..11, row=段内4min格0..29）
+            float cellH = (g_trBotY - g_trTopY) / 30.0f;
+            int col = (int)((x - g_trBaseX) / g_trSlot);
+            int row = (int)((y - g_trTopY) / cellH);
+            if (col >= 0 && col < 12 && row >= 0 && row < 30) idx = col * 30 + row;
         } else {
             int i = (int)((x - g_trBaseX) / g_trSlot);
             if (i >= 0 && (size_t)i < g_trN) idx = i;
@@ -1366,6 +1827,33 @@ static int onTrendMove(UiWidget, float x, float y, int, void*) {
         if (g_win) ui_window_invalidate(g_win);
     }
     g_trHoverX = x; g_trHoverY = y;
+    return 0;
+}
+
+// v0.3.0：图表模式滚轮缩放（光标锚点）。delta 正=上滚=放大（跨度缩小 1/1.2）
+static void onTrendWheel(UiWidget, float x, float y, float delta, void*) {
+    if (g_trendMode < 0 || g_trendMode > 2) return;
+    float dw = g_trendChart.plotX1 - g_trendChart.plotX0;
+    if (dw <= 0) return;
+    // 锚点时间：鼠标 x 映射到时间轴 value
+    double vMin = g_trendChart.tStart +
+                  (double)(x - g_trendChart.plotX0) / (double)dw * g_trendChart.span;
+    double factor = (delta > 0) ? (1.0 / 1.2) : 1.2;
+    g_trendChart.zoomAt(vMin, factor);
+    if (g_win) ui_window_invalidate(g_win);
+}
+// v0.3.0：图表模式拖拽平移：按下记录起点，移动改变视口起点
+static int onTrendDown(UiWidget, float x, float, int, void*) {
+    if (g_trendMode >= 0 && g_trendMode <= 2) g_trendChart.onDown(x);
+    return 0;
+}
+static int onTrendUp(UiWidget, float x, float y, int, void*) {
+    g_trendChart.onUp();
+    // 拖拽结束后立即按当前光标重新吸附十字光标，避免残留旧桶高亮
+    if (g_trendMode >= 0 && g_trendMode <= 2) {
+        bool ch = g_trendChart.onMoveInside(x, y);
+        if (ch && g_win) ui_window_invalidate(g_win);
+    }
     return 0;
 }
 
@@ -1403,6 +1891,11 @@ static void onMouseHeatLeave(UiWidget, void*) {
 static void onTrendMount(UiPage, UiWidget w, void*) {
     ui_custom_on_draw(w, TrendDraw, nullptr);
     ui_custom_on_mouse_move(w, onTrendMove, nullptr);
+    ui_custom_on_mouse_down(w, onTrendDown, nullptr);
+    ui_custom_on_mouse_up(w, onTrendUp, nullptr);
+    // 注意：ui_custom_on_mouse_wheel 对 CustomWidget 收不到事件（core-ui 分发只认
+    // TextArea/ImageView/ScrollView 等），必须用 widget 级 ui_widget_on_mouse_wheel
+    ui_widget_on_mouse_wheel(w, onTrendWheel, nullptr);
     ui_widget_on_mouse_leave(w, onTrendLeave, nullptr);
 }
 static void onApmMount(UiPage, UiWidget w, void*) {
@@ -1412,10 +1905,12 @@ static void onApmMount(UiPage, UiWidget w, void*) {
 }
 // 光标移出趋势图画布 → 收起数值浮窗
 static void onTrendLeave(UiWidget, void*) {
-    if (g_trHover >= 0) {
-        g_trHover = -1;
-        if (g_win) ui_window_invalidate(g_win);
+    bool ch = false;
+    if (g_trHover >= 0) { g_trHover = -1; ch = true; }
+    if (g_trendChart.hoverActive || g_trendChart.hoverBucket >= 0) {
+        g_trendChart.onLeave(); ch = true;
     }
+    if (ch && g_win) ui_window_invalidate(g_win);
 }
 // APM 曲线悬浮
 static int onApmMove(UiWidget, float x, float y, int, void*) {
@@ -1578,6 +2073,28 @@ static void doClearRange() {
     pushStats();
 }
 
+// 解析 UI 系列勾选 JSON（如 "[1,0,1,0]"）→ 勾选系列下标列表（timechart enabled 语义）。
+// 注意：0/1 是【第 i 个系列是否勾选】的标志位，须转成下标 i 的列表，不能把值本身当下标。
+static std::vector<int> parseSeriesFlags(const char* j) {
+    std::vector<int> flags, idx;
+    const char* p = strchr(j, '[');
+    if (p) {
+        ++p;
+        while (*p && *p != ']') {
+            while (*p && (*p == ' ' || *p == ',' || *p == '\t')) ++p;
+            if (*p == ']' || !*p) break;
+            char* end = nullptr;
+            long v = strtol(p, &end, 10);
+            if (end == p) break;
+            flags.push_back((int)v);
+            p = end;
+        }
+    }
+    for (size_t i = 0; i < flags.size() && i < 4; ++i)
+        if (flags[i]) idx.push_back((int)i);
+    return idx;
+}
+
 // 范围弹窗确认：读取 UI 日期 → 按 pending 用途分发
 static void handleRangeConfirm() {
     std::string s1, s2;
@@ -1680,9 +2197,36 @@ static void pollCommands() {
     if (oac != g_lastOptCmd) {
         g_lastOptCmd = oac;
         app().optAppTrack = !app().optAppTrack;
+        // 关闭 per-app 明细时复位应用筛选（appMin 将不再记录，筛选结果失去意义）
+        if (!app().optAppTrack && !g_filterApp.empty()) {
+            g_filterApp.clear();
+            g_filterCacheDirty = true;
+            if (g_page) ui_page_set_json(g_page, "filterApp", "\"\"");
+        }
         app().dirty = true;
         pollForeApp();             // 立即刷新前台应用，确保开启后立刻生效
         app().needsRefresh = true;
+    }
+    // 按应用筛选（v0.3.0）：filterAppCmd 增量触发，读取 filterApp 为目标应用名
+    if (char* j = ui_page_get_json(g_page, "filterAppCmd")) {
+        int fc = jsonInt(j, 0);
+        ui_page_free(j);
+        if (fc != g_lastFilterCmd) {
+            g_lastFilterCmd = fc;
+            std::string name;
+            if (char* nj = ui_page_get_json(g_page, "filterApp")) {
+                name = jsonText(nj, ""); ui_page_free(nj);
+            }
+            if (name != g_filterApp) {
+                g_filterApp = name;
+                g_filterCacheDirty = true;   // 聚合缓存整体重建
+                g_trHover = -1;
+                g_trendChart.hoverBucket = -1; g_trendChart.hoverActive = false;
+                g_trendChart.cacheValid = false;   // 时间序列桶数据源已变，缓存作废
+                app().needsRefresh = true;
+                if (g_win) ui_window_invalidate(g_win);
+            }
+        }
     }
     // 前台应用排除列表（增量添加）
     if (exc != g_lastExclCmd) {
@@ -1730,11 +2274,39 @@ static void pollCommands() {
         ui_page_free(lj);
     }
 
-    // 趋势图模式切换
+    // 趋势图模式切换（0=日 1=月 2=年 3=周柱状 4=一周×24h 5=单日12×30）
     if (char* j = ui_page_get_json(g_page, "trendModeIdx")) {
         int m = jsonInt(j, g_trendMode);
-        if (m < 0 || m > 4) m = g_trendMode;
-        if (m != g_trendMode) { g_trendMode = m; app().needsRefresh = true; }
+        if (m < 0 || m > 5) m = g_trendMode;
+        if (m != g_trendMode) {
+            g_trendMode = m;
+            g_trendChartDirty = true;   // 视口懒重建（模式或日期变化后置脏）
+            g_trHover = -1;             // 清除旧模式悬停残留
+            g_trendChart.hoverBucket = -1; g_trendChart.hoverActive = false;
+            g_trendChart.dragging = false;
+            app().needsRefresh = true;
+        }
+        ui_page_free(j);
+    }
+    // 多系列勾选（T7 前置）：trendSeries=[按键,点击,里程,活跃] 0/1 → g_trendChart.enabled（保留系列下标）。
+    // 不置 g_trendChartDirty：enabled 由 ensureData 在每次绘制时从缓存过滤应用，只重绘即可，避免重置缩放/平移视口。
+    if (char* j = ui_page_get_json(g_page, "trendSeries")) {
+        std::vector<int> idx = parseSeriesFlags(j);
+        if (!idx.empty() && idx != g_trendChart.enabled) {
+            g_trendChart.enabled = idx;
+            g_trendChart.hoverBucket = -1; g_trendChart.hoverActive = false;
+            app().needsRefresh = true;
+        }
+        ui_page_free(j);
+    }
+    // 总览叠加系列（T7）：overviewSeries=[按键,点击,里程,活跃] 0/1 → g_overviewSeries（下标列表）。
+    // 全不勾合法：总览叠加是 APM 曲线之上的“显示更多系列”，空=仅 APM 曲线。
+    if (char* j = ui_page_get_json(g_page, "overviewSeries")) {
+        std::vector<int> idx = parseSeriesFlags(j);
+        if (idx != g_overviewSeries) {
+            g_overviewSeries = idx;
+            app().needsRefresh = true;
+        }
         ui_page_free(j);
     }
     // 键盘配列切换
@@ -1750,7 +2322,7 @@ static void pollCommands() {
     }
     // 日期选择
     bool dateDirty = false;
-    if (g_trendMode == 0) {
+    if (g_trendMode == 0 || g_trendMode == 5) {   // 按日 / 单日12×30 均读日期
         if (char* j = ui_page_get_json(g_page, "dateStr")) {
             std::string s = jsonText(j, "");
             int y, m, d;
@@ -1793,7 +2365,11 @@ static void pollCommands() {
             ui_page_free(j);
         }
     }
-    if (dateDirty) app().needsRefresh = true;
+    if (dateDirty) {
+        g_trendChartDirty = true;   // 日期变化后重建视口（日/月/年模式）
+        g_trendChart.hoverBucket = -1; g_trendChart.hoverActive = false;
+        app().needsRefresh = true;
+    }
 }
 
 static VOID CALLBACK TimerProc(HWND, UINT, UINT_PTR id, DWORD) {
@@ -1845,6 +2421,12 @@ static VOID CALLBACK TimerProc(HWND, UINT, UINT_PTR id, DWORD) {
         break;
     }
     case TI_REFRESH: {                      // 60 帧 UI 刷新轮询
+        // v0.3.0：时间序列图 缩放/拖拽 平滑过渡逐帧推进（视口+纵轴插值）
+        if (g_trendChart.animating && g_win && !g_inResizeMode &&
+            IsWindowVisible(g_hwnd)) {
+            g_trendChart.tick();
+            ui_window_invalidate(g_win);
+        }
         if (app().needsRefresh && !g_inResizeMode) {   // 拖拽中不重统计，避免卡顿
             // 节流 + 可见性：合并高频输入（点击/移动）产生的刷新请求；
             // 窗口隐藏（托盘/最小化）时跳过全量 UI 刷新，needsRefresh 保留
