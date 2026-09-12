@@ -889,7 +889,7 @@ export default {
           <ScrollView class="scroll-fill">
             <div class="mouse-grid">
               <!-- 标题+版本+简介置顶（从页面中下部上移） -->
-              <label class="ab-title" style="margin-top: 0;">键鼠使用记录 v3.1.0</label>
+              <label class="ab-title" style="margin-top: 0;">键鼠使用记录 v0.3.1</label>
               <label class="ab-line" style="margin-bottom: 2px;">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
 
               <label class="ab-h2">存储</label>
