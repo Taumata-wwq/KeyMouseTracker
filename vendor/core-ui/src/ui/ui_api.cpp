@@ -115,7 +115,7 @@ UI_API UiWindow ui_window_create(const UiWindowConfig* config) {
     win->startMaximizedPending_ = (config->start_maximized != 0);
     int initX = (config->x != 0 || config->y != 0) ? config->x : CW_USEDEFAULT;
     int initY = (config->x != 0 || config->y != 0) ? config->y : CW_USEDEFAULT;
-    /* Build 65+ (L14): 把 owner UiWindow handle 解析成 HWND 传给 Create.
+    /* Build 65+: 把 owner UiWindow handle 解析成 HWND 传给 Create.
      * 0 / 找不到 = nullptr (顶级窗口). */
     HWND ownerHwnd = nullptr;
     if (config->owner) {
@@ -299,7 +299,7 @@ UI_API void ui_menu_destroy(UiMenu menu) {
     Ctx().RemoveMenu(menu);
 }
 
-/* BREAKING (build 75): 老的 imperative C API ui_menu_add_item / add_item_ex /
+/* BREAKING : 老的 imperative C API ui_menu_add_item / add_item_ex /
  * add_submenu(text, sub) 全删 — menu 现在只走声明式 .uix 路径 (PageState 内部
  * 用 AddItemContent / AddSubmenu(widget, sub)). 这一条体现"早期 lib 砍老兼容,
  * 别留 C 端老 caller 路径". 仍保留: ui_menu_create / destroy / add_separator /
@@ -539,8 +539,7 @@ UI_API UiWidget ui_scroll_view(void) {
 }
 
 // ================================================================
-// MsgBox (build 158 — 取代 in-window ui_dialog_*)
-// ================================================================
+// MsgBox// ================================================================
 
 UI_API int ui_msgbox(UiWindow win,
                      const wchar_t* title, const wchar_t* message,
@@ -589,7 +588,7 @@ UI_API UiMsgBoxResult ui_msgbox_ex(UiWindow win, const UiMsgBoxParams* p) {
     const UiColor* colors =
         field_avail(offsetof(UiMsgBoxParams, button_colors) + sizeof(void*))
             ? p->button_colors : nullptr;
-    /* build 172: 每按钮快捷键 (struct_size 护栏 — 旧调用方不含此字段仍合法)。 */
+    /*  每按钮快捷键 (struct_size 护栏 — 旧调用方不含此字段仍合法)。 */
     std::vector<int> btn_keys;
     if (field_avail(offsetof(UiMsgBoxParams, button_keys) + sizeof(void*))
         && p->button_keys) {
@@ -1079,7 +1078,7 @@ UI_API void ui_gh_img_view_begin(UiWidget w, UiWindow win, const UiGhImgViewInfo
     ii.tileSize    = info->tile_size ? info->tile_size : 256u;
     ii.levels      = info->levels    ? info->levels    : 1u;
     ii.pixelFormat = info->pixel_format;
-    ii.keepPreview = info->keep_preview != 0;   /* L168: 保留现有 preview 兜底层 */
+    ii.keepPreview = info->keep_preview != 0;   /* 保留现有 preview 兜底层 */
     gv->Begin(ii, wn->GetRenderer());
 }
 
@@ -1300,7 +1299,7 @@ UI_API void ui_gh_img_view_on_viewport(UiWidget w,
     };
 }
 
-// L48: tile evict callback — NotifyViewport trim viewport 外 tile 时 fire,
+// tile evict callback — NotifyViewport trim viewport 外 tile 时 fire,
 // caller 同步自己端 pushed_tiles_ erase.
 UI_API void ui_gh_img_view_on_tile_evicted(UiWidget w,
                                             UiGhImgViewTileEvictedCallback cb,
@@ -1784,7 +1783,7 @@ UI_API void ui_widget_set_gap(UiWidget w, float gap) {
 }
 
 UI_API void ui_widget_set_visible(UiWidget w, int visible) {
-    /* L95: 改可见性会折叠/展开 flex 布局, 必须跟 set_size/set_expand/add_child
+    /* 改可见性会折叠/展开 flex 布局, 必须跟 set_size/set_expand/add_child
      * 一样请求重布局+重绘 —— 否则隐藏时算出的 0×0 rect 卡住, set_visible(0→1)
      * 后控件不显示, 要等别的 relayout(如重开窗口)才生效. 之前漏了这行. */
     auto* p = W(w);
@@ -1868,7 +1867,7 @@ UI_API void ui_widget_on_mouse_leave(UiWidget w,
     };
 }
 
-/* Drag & drop (build 259+) — 见 ui_core.h 注释. */
+/* Drag & drop  — 见 ui_core.h 注释. */
 UI_API void ui_widget_set_draggable(UiWidget w, int draggable) {
     auto* p = W(w);
     if (p) p->draggable = draggable != 0;
@@ -1910,7 +1909,7 @@ UI_API void ui_widget_on_drag_end(UiWidget w, UiDragEndCallback cb,
     };
 }
 
-/* Build 64+ (L13): 通用 widget focus / blur hook. 内部接 Widget::onFocusHook /
+/* Build 64+: 通用 widget focus / blur hook. 内部接 Widget::onFocusHook /
  * onBlurHook (这两个 hook lib 内已存在, JS 端通过 page_state.cpp 用着, 现在
  * 暴露 C API). 触发点: UiWindowImpl::SetFocus 切换 focusedWidget_ 时, 旧 widget
  * 触发 blur, 新 widget 触发 focus. cb=NULL 解绑. */
@@ -1938,7 +1937,7 @@ UI_API void ui_widget_on_blur(UiWidget w,
     };
 }
 
-/* build 287: 通用 widget submit hook. 接 Widget::onSubmitHook —— TextInput /
+/*  通用 widget submit hook. 接 Widget::onSubmitHook —— TextInput /
  * TextArea 在 OnKeyDown 收到 VK_RETURN 时 fire。见 ui_core.h 里的说明: 这是
  * v-for 迭代体内做行内编辑时唯一能拿到 Enter 的路子。cb=NULL 解绑. */
 UI_API void ui_widget_on_submit(UiWidget w,
@@ -1953,7 +1952,7 @@ UI_API void ui_widget_on_submit(UiWidget w,
     };
 }
 
-/* Build 66+ (L16): 通用 widget 滚轮回调. 接 Widget::onMouseWheelHook
+/* Build 66+: 通用 widget 滚轮回调. 接 Widget::onMouseWheelHook
  * (跟 .uix @wheel 同路径). UiWindowImpl::OnMouseWheel 开头会无条件 fire
  * 这个 hook, 跟 widget 子类的 OnMouseWheel dispatch loop 无关 — 所以
  * <custom> 等不在 dispatch list 里的 widget 也能收到. cb=NULL 解绑. */
@@ -1970,7 +1969,7 @@ UI_API void ui_widget_on_mouse_wheel(UiWidget w,
     };
 }
 
-/* build 287: widget 级 contextmenu hook. 见 ui_core.h 里的说明 —— 这是列表
+/*  widget 级 contextmenu hook. 见 ui_core.h 里的说明 —— 这是列表
  * 逐行右键唯一可靠的挂法, selector trigger 撞 v-if 时序会失效。
  * x/y 传窗口 DIP 坐标 (MouseEvent 里就是), 直接能喂 ui_menu_show. cb=NULL 解绑. */
 UI_API void ui_widget_on_context_menu(UiWidget w,
@@ -2421,7 +2420,7 @@ UI_API void ui_custom_on_layout(UiWidget w, UiCustomLayoutCallback cb, void* ud)
 
 #undef CUSTOM_SET_CB
 
-/* Build 64+ (L13): set_focused 同时把 widget 推进 owner window 的 focusedWidget_
+/* Build 64+: set_focused 同时把 widget 推进 owner window 的 focusedWidget_
  * 槽, 让键盘事件 (WM_KEYDOWN) 能路由到这里; 同时触发 onFocusHook / onBlurHook.
  * 旧调用方 (只把 paint bool 切来切去, 不需要键盘) 行为完全兼容 — 仍然写 paint
  * bool, 多做的 SetFocus / ClearFocus 对没注册 keyDown 回调的 widget 无副作用. */
@@ -2444,7 +2443,7 @@ UI_API int ui_custom_get_focused(UiWidget w) {
     return cw ? (int)cw->focused : 0;
 }
 
-/* Build 64+ (L13): 让 <custom> 进入 lib 的键盘焦点系统 (focusable=true 时, 鼠标
+/* Build 64+: 让 <custom> 进入 lib 的键盘焦点系统 (focusable=true 时, 鼠标
  * 点击会 SetFocus(this), Tab 也能走到). 默认 false 保留"纯展示型" custom widget
  * 不吃键盘的行为. 调用方接管键盘交互时 opt-in. */
 UI_API void ui_custom_set_focusable(UiWidget w, int focusable) {
@@ -3017,7 +3016,7 @@ UI_API void ui_asset_invalidate(const char* name) {
 
 UI_API int ui_debug_scroll_set(UiWidget w, float y) {
     auto* sv = As<ui::ScrollViewWidget>(w); if (!sv) return -1;
-    /* build 285: SetScrollY 自己走纯偏移路径把内容归位了, 不必再补一次
+    /*  SetScrollY 自己走纯偏移路径把内容归位了, 不必再补一次
      * DoLayout()。留着的话调试通道量到的是"滚动 + 全量重布局", 跟真实鼠标
      * 滚动不是同一条路 —— 性能对比会失真, 而且掩盖住本次优化的效果。 */
     sv->SetScrollY(y);

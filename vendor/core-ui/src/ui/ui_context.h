@@ -84,7 +84,7 @@ public:
         AnimationInvalidation invalidation = AnimationInvalidation::Paint);
     bool HasWindows() const { return !windows_.empty(); }
 
-    /* ---- 批量绑定合批 (build 285) ---------------------------------------
+    /* ---- 批量绑定合批   ---------------------------------------
      * 背景: PageState::ApplyBindingToWidget 每应用一条绑定就
      * InvalidateAllWindows() + UpdateAnimTimers()。后者会**遍历整棵 widget 树**
      * 并对每个节点做 6 次以上 dynamic_cast —— 单次是 O(树大小)。
@@ -144,7 +144,7 @@ private:
     std::unordered_map<uint64_t, std::unique_ptr<UiWindowImpl>> windows_;
     uint64_t nextWindowId_ = 1;
 
-    /* 批量绑定合批 (build 285) — 见上方 BeginBatch 注释 */
+    /* 批量绑定合批   — 见上方 BeginBatch 注释 */
     int  batchDepth_             = 0;
     bool batchPendingInvalidate_ = false;
     bool batchPendingAnimTimers_ = false;

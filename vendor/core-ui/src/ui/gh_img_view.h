@@ -198,7 +198,7 @@ public:
     // 不随 zoom 历史累积. 代价: zoom out / pan 跨 level 重解码 viewport tile,
     // 单 tile 0.38ms × 4 worker 并发 ≈ 10ms 不可感知.
     //
-    // 之前 (build 116 v1-v3 LRU 实现) cap 32MB 在 viewport tile 数 > 128 时
+    // 之前 (v1-v3 LRU 实现) cap 32MB 在 viewport tile 数 > 128 时
     // (4K 屏 / 大 zoom level) 自相残杀 — evict 自己刚 push 的 tile, 用户
     // 报告 "中间清晰边缘模糊". 改成 viewport 严格管 + caller pushed_tiles_
     // 通过 callback 同步, 该 bug 消除.

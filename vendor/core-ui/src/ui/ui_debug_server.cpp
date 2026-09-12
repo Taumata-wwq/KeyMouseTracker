@@ -10,7 +10,7 @@
 #include "ui_window.h"
 #include "controls.h"
 #include "gh_img_view.h"
-#include "msgbox.h"            /* build 172: dialog_* IPC 自动化 → MsgBoxDebug* */
+#include "msgbox.h"            /*  dialog_* IPC 自动化 → MsgBoxDebug* */
 #include "../../include/ui_core.h"
 
 #include <atomic>
@@ -654,7 +654,7 @@ std::string BuiltinDispatch(UiWindow win, const std::string& cmd,
         return okJson();
     }
 
-    // --- 模态对话框 (ui_msgbox) IPC 自动化 (build 172) ---
+    // --- 模态对话框 (ui_msgbox) IPC 自动化  ---
     // DispatchOnce 整体经 ui_window_invoke_sync 在 UI 线程跑 (模态 GetMessage(NULL)
     // loop 会 pump 该 invoke), 故此处可直接调 MsgBoxDebug* (同线程访问 g_activeBox)。
     if (cmd == "dialog_state") {
@@ -759,7 +759,7 @@ std::string BuiltinDispatch(UiWindow win, const std::string& cmd,
 // Pipe server thread + global state
 // ============================================================================
 
-/* L12 (build 63+): 多个 server 并存. 每个 server 绑一个 UiWindow + 独立
+/* L12 : 多个 server 并存. 每个 server 绑一个 UiWindow + 独立
  * pipe_name + 独立 accept thread / event / pipe handle. unique_ptr 包起来
  * 让 vector 重排不动 entry 本身, worker 持的 raw ptr 一直有效. */
 struct ServerEntry {

@@ -83,7 +83,7 @@ struct CompiledMenu;
 using CompiledMenuPtr = std::shared_ptr<CompiledMenu>;
 
 struct CompiledMenuItem {
-    /* BREAKING (build 75 / L17 follow-up): menuitem 重设计成 widget slot —
+    /* menuitem 重设计成 widget slot —
      * 老的 text / shortcut(文本字段) / iconSvg / imgSrc / hasColor / color_* /
      * boundText / boundIcon / boundStyle 全删. <menuitem> body 内任何 widget
      * 子节点 (svg / label / div / button / ...) 都按普通 widget 编译, 走
@@ -126,7 +126,7 @@ struct CompiledMenu {
     float        backdropBlur = -1.0f;
     std::string  boundBackdropBlurExpr; // :backdrop-blur / :backdrop-filter — 求 number 或 blur(...)
     std::vector<CompiledMenuItem> items;
-    /* Phase E (L17 / build 73): 整个 menu / submenu 的 v-if / v-show. 求 false
+    /* 整个 menu / submenu 的 v-if / v-show. 求 false
      * 时 PopulateMenu 整体 skip 不 build items, ShowMenu 触发也是空菜单. */
     std::string  vIfExpr;
 };

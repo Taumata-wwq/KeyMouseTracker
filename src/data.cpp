@@ -228,6 +228,9 @@ void recordClick(uint8_t btn, LONG x, LONG y) {
         if (!a.empty()) {
             AppMinuteData& am = t.appMin[a];
             am.clickBtnMinute[g_cachedMin]++;
+            if (btn == 1) am.leftBtnMinute[g_cachedMin]++;
+            else if (btn == 2) am.rightBtnMinute[g_cachedMin]++;
+            else if (btn == 3) am.midBtnMinute[g_cachedMin]++;
             if (idx >= 0) am.clickByMinute[g_cachedMin][(uint32_t)idx]++;
         }
     }
@@ -329,6 +332,30 @@ uint64_t appMotionPx(const DayData& d, const std::string& exe, int minStart, int
     return total;
 }
 
+// 活跃分钟数：任一子 map (key/click/motion/movePx/clickBtn) 中出现即视为该分钟应用活跃。
+// 用于 24h 综合分：把"持续在前景时间"作为独立维度，与键/点击/里程互补。
+// 五个子 map 的 value 类型混合（uint16_t / uint32_t / 嵌套 map），按键分钟插入集合去重。
+uint64_t appActiveMin(const DayData& d, const std::string& exe, int minStart, int minEnd) {
+    auto addKeysOf = [](const auto& m, int ma, int mb, std::set<uint16_t>& mins) {
+        for (auto& kv : m) if (inMinRange((int)kv.first, ma, mb)) mins.insert(kv.first);
+    };
+    auto gather = [&](const AppMinuteData& am, std::set<uint16_t>& mins) {
+        addKeysOf(am.keyByMinute,     minStart, minEnd, mins);   // min -> { vk: c }
+        addKeysOf(am.clickByMinute,   minStart, minEnd, mins);   // min -> { heat: c }
+        addKeysOf(am.motionByMinute,  minStart, minEnd, mins);   // min -> c (uint16)
+        addKeysOf(am.movePxByMinute,  minStart, minEnd, mins);   // min -> px (uint32)
+        addKeysOf(am.clickBtnMinute,  minStart, minEnd, mins);   // min -> c (uint16)
+    };
+    std::set<uint16_t> mins;
+    if (!exe.empty()) {
+        auto it = d.appMin.find(exe);
+        if (it != d.appMin.end()) gather(it->second, mins);
+        return (uint64_t)mins.size();
+    }
+    for (auto& ap : d.appMin) gather(ap.second, mins);
+    return (uint64_t)mins.size();
+}
+
 // 前置声明（eraseRange 使用）
 static void rebuildCumulative();
 
@@ -408,36 +435,39 @@ static uint64_t readVarint(const unsigned char*& p, const unsigned char* end) {
     return v;
 }
 
-// KMT5：varint 编码版本。布局（与旧 KMT4 不兼容，读取时按 MAGIC 分流）：
-//   "KMT5" u32 version
-//   u16 dayCount
-//   每 Day：u16 day
-//     varint keys clicks mLeft mMid mRight activeSec motion distPx
-//     varint idleSec maxSessionSec sessionCount          (v6+)
-//     varint minuteActivity.size; (varint minute, varint count)*   (v6+)
-//     varint keyMinuteActivity.size; (varint minute, varint count)*   (v9+)
-//     varint clickMinuteActivity.size; (varint minute, varint count)*   (v9+)
-//     varint keyHourly.size;      (varint key, varint count)*     (v6+)
-//     varint keyCounts.size; (varint vk, varint count)*
-//     varint mouseHeat.size;  (varint idx, varint count)*
-//     varint hourlyKeys[24];  varint hourlyClicks[24]
-//     varint appCounts.size; (varint namelen, utf8 bytes, varint count)*   (v7+)
-//     varint appMin.size; { appEntry }*                                     (v11+)
-//       appEntry: varint namelen, utf8 bytes,                              (与 appCounts 同名应用)
-//         varint keyByMinute.size; (varint min, varint vkSize, (varint vk, varint count)*)*
-//         varint clickByMinute.size; (varint min, varint gridSize, (varint idx, varint count)*)*
-//         varint motionByMinute.size; (varint min, varint count)*
-//         varint movePxByMinute.size; (varint min, varint px)*
-//         varint clickBtnMinute.size; (varint min, varint count)*
-//   全局：u8 darkTheme
-//     varint hiddenKeys.size; varint vk*
-//     u8 kbLayout
-//     u8 optAppTrack     (v7+)
-//     varint excludeApps.size + (varint namelen, utf8 bytes)* ; u8 idleMin   (v8+)
+// KMvarint 编码版本。布局（与旧 KMT4 不兼容，读取时按 MAGIC 分流）：
+// "KMT5" u32 version
+// u16 dayCount
+// 每 Day：u16 day
+// varint keys clicks mLeft mMid mRight activeSec motion distPx
+// varint idleSec maxSessionSec sessionCount          (v6+)
+// varint minuteActivity.size; (varint minute, varint count)*   (v6+)
+// varint keyMinuteActivity.size; (varint minute, varint count)*   (v9+)
+// varint clickMinuteActivity.size; (varint minute, varint count)*   (v9+)
+// varint keyHourly.size;      (varint key, varint count)*     (v6+)
+// varint keyCounts.size; (varint vk, varint count)*
+// varint mouseHeat.size;  (varint idx, varint count)*
+// varint hourlyKeys[24];  varint hourlyClicks[24]
+// varint appCounts.size; (varint namelen, utf8 bytes, varint count)*   (v7+)
+// varint appMin.size; { appEntry }*                                     (v11+)
+// appEntry: varint namelen, utf8 bytes,                              (与 appCounts 同名应用)
+// varint keyByMinute.size; (varint min, varint vkSize, (varint vk, varint count)*)*
+// varint clickByMinute.size; (varint min, varint gridSize, (varint idx, varint count)*)*
+// varint motionByMinute.size; (varint min, varint count)*
+// varint movePxByMinute.size; (varint min, varint px)*
+// varint clickBtnMinute.size; (varint min, varint count)*
+// varint leftBtnMinute.size; (varint min, varint count)*      (v12+)
+// varint midBtnMinute.size; (varint min, varint count)*       (v12+)
+// varint rightBtnMinute.size; (varint min, varint count)*     (v12+)
+// 全局：u8 darkTheme
+// varint hiddenKeys.size; varint vk*
+// u8 kbLayout
+// u8 optAppTrack     (v7+)
+// varint excludeApps.size + (varint namelen, utf8 bytes)* ; u8 idleMin   (v8+)
 bool saveData(const std::wstring& path) {
     std::vector<unsigned char> out;
     out.insert(out.end(), { 'K', 'M', 'T', '5' });
-    writeU32(out, 11); // version
+    writeU32(out, 12); // version
     auto& days = app().days;
     writeU16(out, (uint16_t)days.size());
     for (auto it = days.begin(); it != days.end(); ++it) {
@@ -499,6 +529,13 @@ bool saveData(const std::wstring& path) {
             for (auto& mm : am.movePxByMinute) { writeVarint(out, mm.first); writeVarint(out, mm.second); }
             writeVarint(out, (uint64_t)am.clickBtnMinute.size());
             for (auto& mm : am.clickBtnMinute) { writeVarint(out, mm.first); writeVarint(out, mm.second); }
+            // v12：左/中/右键分钟拆分
+            writeVarint(out, (uint64_t)am.leftBtnMinute.size());
+            for (auto& mm : am.leftBtnMinute) { writeVarint(out, mm.first); writeVarint(out, mm.second); }
+            writeVarint(out, (uint64_t)am.midBtnMinute.size());
+            for (auto& mm : am.midBtnMinute) { writeVarint(out, mm.first); writeVarint(out, mm.second); }
+            writeVarint(out, (uint64_t)am.rightBtnMinute.size());
+            for (auto& mm : am.rightBtnMinute) { writeVarint(out, mm.first); writeVarint(out, mm.second); }
         }
     }
     out.push_back(app().darkTheme ? 1 : 0);
@@ -547,13 +584,13 @@ static void rebuildCumulative() {
     }
 }
 
-// ===== 旧数据迁移器（v0.3.0 / 文件版本 <11）=====
+// ===== 旧数据迁移器（文件版本 <11）=====
 // 旧数据只有“日聚合 + appCounts[exe]=键+击总数”，缺失 per-app 分钟粒度。
 // 迁移目标：生成 appMin[exe] 的按分钟明细，且满足：
-//   * 每应用、每日按键总分享 == appCounts 按全局键/击比例拆出的键份额；点击同理；
-//   * keyMinuteActivity/clickMinuteActivity 的分钟分布忠实保留（作为权重）；
-//   * 按键按 vk、点击按热力格细分（尽量利用 keyHourly / mouseHeat）；
-//   * mouseHeat / keyCounts 等旧全局字段一律不动。
+// * 每应用、每日按键总分享 == appCounts 按全局键/击比例拆出的键份额；点击同理；
+// * keyMinuteActivity/clickMinuteActivity 的分钟分布忠实保留（作为权重）；
+// * 按键按 vk、点击按热力格细分（尽量利用 keyHourly / mouseHeat）；
+// * mouseHeat / keyCounts 等旧全局字段一律不动。
 // 确定性：rng 由当日序号播种，结果可复现；仅对 ver<11 调用一次。
 
 // 普通线性同余随机数（确定性）
@@ -656,17 +693,6 @@ static bool migrateOldData() {
         if (kv.second.appMin.size() > before) produced = true;
     }
     return produced;
-}
-
-// 清空全部统计记录：默认仅清除历史与热力，保留隐藏键等偏好；随后重建累积
-// 并为今天重建一个空条目，最后写盘持久化。
-void clearAllData() {
-    app().days.clear();
-    rebuildCumulative();
-    ensureCurDay();
-    saveData(dataFilePath());
-    app().dirty = false;
-    app().needsRefresh = true;
 }
 
 // 读取 KMT4（旧，兼容）或 KMT5（varint）：
@@ -830,6 +856,15 @@ bool loadData(const std::wstring& path) {
                         for (uint64_t b = 0; b < cbb; ++b) {
                             uint16_t min = (uint16_t)readVarint(p, end);
                             am.clickBtnMinute[min] = (uint16_t)readVarint(p, end);
+                        }
+                        // v12：左/中/右键分钟拆分（旧数据无此字段，保持空）
+                        if (ver >= 12) {
+                            uint64_t lb = readVarint(p, end);
+                            for (uint64_t b = 0; b < lb; ++b) { uint16_t min = (uint16_t)readVarint(p, end); am.leftBtnMinute[min] = (uint16_t)readVarint(p, end); }
+                            uint64_t mb = readVarint(p, end);
+                            for (uint64_t b = 0; b < mb; ++b) { uint16_t min = (uint16_t)readVarint(p, end); am.midBtnMinute[min] = (uint16_t)readVarint(p, end); }
+                            uint64_t rb = readVarint(p, end);
+                            for (uint64_t b = 0; b < rb; ++b) { uint16_t min = (uint16_t)readVarint(p, end); am.rightBtnMinute[min] = (uint16_t)readVarint(p, end); }
                         }
                         d.appMin[exe] = std::move(am);
                     }

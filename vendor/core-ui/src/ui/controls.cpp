@@ -244,7 +244,7 @@ D2D1_SIZE_F LabelWidget::SizeHint() const {
         } else {
             float asciiW = bold_ ? fontSize_ * 0.66f : fontSize_ * 0.62f;
             for (wchar_t ch : text_) {
-                /* build 290: 0x2E80 这条线漏了 **U+2010–U+2027 那段通用标点**
+                /*  0x2E80 这条线漏了 **U+2010–U+2027 那段通用标点**
                  * —— …(2026) —(2014) ‘’(2018/2019) “”(201C/201D) 在中文排版里
                  * 都是全角, 却因为码点小于 0x2E80 被按 0.62 倍的半角算。
                  *
@@ -278,7 +278,7 @@ D2D1_SIZE_F LabelWidget::SizeHint() const {
      * 返自然宽, 受约束 (fixedW / flex shrink / 父级显式 width) 的 label 仍
      * 然在画的时候按真实分配宽度 wrap. */
     float w = estW;
-    /* line-height 决定单行 label 高度 (build 92, L20):
+    /* line-height 决定单行 label 高度 :
      *   - lineHeightPx_     >0: CSS "Npx" 直接用
      *   - lineHeightRatio_  >0: CSS unitless (1.3 = 1.3×fontSize)
      *   - 否则:                  默认 1.3 × fontSize (现代浏览器 / Fluent UI)
@@ -300,7 +300,7 @@ D2D1_SIZE_F LabelWidget::SizeHint() const {
             if (g_activeMeasureContext) {
                 auto weight = bold_ ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL;
                 float textH = g_activeMeasureContext->MeasureTextHeight(text_, availW, fontSize_, weight);
-                /* build 92 (L20): wrap 分支也走 line-height. DWrite textH 包含
+                /*: wrap 分支也走 line-height. DWrite textH 包含
                  * ascent + descent (单行 ≈ fontSize × 1.2). 折成行数后乘 lineH.
                  * 1.4 阈值: 单行实际 ratio ≈ 1.2, 用 1.4 当 "definitely > 1 line"
                  * 边界, 防 ceil(1.23) 错误判 2 行. */
@@ -477,15 +477,11 @@ bool ButtonWidget::OnMouseUp(const MouseEvent& e) {
 }
 
 D2D1_SIZE_F ButtonWidget::SizeHint() const {
-    // Auto-fit width to actual text. WinUI 3 button has 12px padding on each
-    // side; min width 60 keeps short labels clickable. Falls back to a coarse
-    // char-count estimate when the renderer isn't available yet (very first
-    // pre-paint layout).
+    // 宽度 = 文字 + CSS 左右 padding（不再硬编码 24px/最小 60px，紧凑按钮可窄于普通按钮）
     float h = fixedH > 0 ? fixedH : 32.0f;
     if (fixedW > 0) return {fixedW, h};
 
-    constexpr float kHorizPad = 24.0f;   // 12px each side
-    constexpr float kMinW     = 60.0f;
+    constexpr float kMinW = 8.0f;
     float textW = 0.0f;
     extern MeasureContext* g_activeMeasureContext;
     if (g_activeMeasureContext && !text_.empty()) {
@@ -495,7 +491,7 @@ D2D1_SIZE_F ButtonWidget::SizeHint() const {
         // up wide enough on the next frame once the renderer is up).
         textW = fontSize_ * (float)text_.length() * 0.7f;
     }
-    float w = std::max(kMinW, textW + kHorizPad);
+    float w = std::max(kMinW, textW + padL + padR);
     return {w, h};
 }
 
@@ -520,9 +516,9 @@ void CheckBoxWidget::OnDraw(Renderer& r) {
     Widget::OnDraw(r);
     bool dark = theme::IsDark();
 
-    float boxSize = 20.0f;
+    float boxSize = 14.0f;
     float cy = (rect.top + rect.bottom) / 2;
-    float bx = rect.left + 2;
+    float bx = rect.left + 1;
     float by = cy - boxSize / 2;
 
     D2D1_RECT_F box = {bx, by, bx + boxSize, by + boxSize};
@@ -553,7 +549,7 @@ void CheckBoxWidget::OnDraw(Renderer& r) {
             float glyphAlpha = std::min(1.0f, (t - 0.3f) / 0.4f);
             D2D1_COLOR_F checkColor = dark ? D2D1_COLOR_F{0,0,0, glyphAlpha}
                                            : D2D1_COLOR_F{1,1,1, glyphAlpha};
-            float glyphSize = 12.0f;
+            float glyphSize = 10.0f;
             D2D1_RECT_F glyphBox = {
                 bx + (boxSize - glyphSize) / 2, by + (boxSize - glyphSize) / 2,
                 bx + (boxSize + glyphSize) / 2, by + (boxSize + glyphSize) / 2
@@ -576,14 +572,14 @@ void CheckBoxWidget::OnDraw(Renderer& r) {
         }
     }
 
-    D2D1_RECT_F labelRect = {bx + boxSize + 8, rect.top, rect.right, rect.bottom};
+    D2D1_RECT_F labelRect = {bx + boxSize + 4, rect.top, rect.right, rect.bottom};
     r.DrawText(text_, labelRect, fg, fontSize);
 }
 
 float CheckBoxWidget::ContentRight_() const {
-    float boxSize = 20.0f, gap = 8.0f;
+    float boxSize = 14.0f, gap = 4.0f;
     float textW = theme::kFontSizeNormal * 0.65f * (float)text_.size();
-    return rect.left + padL + boxSize + gap + textW + 8.0f;
+    return rect.left + padL + boxSize + gap + textW + 4.0f;
 }
 
 bool CheckBoxWidget::OnMouseUp(const MouseEvent& e) {
@@ -601,10 +597,10 @@ bool CheckBoxWidget::OnMouseMove(const MouseEvent& e) {
 }
 
 D2D1_SIZE_F CheckBoxWidget::SizeHint() const {
-    float boxSize = 20.0f, gap = 8.0f;
+    float boxSize = 14.0f, gap = 4.0f;
     float textW = theme::kFontSizeNormal * 0.65f * (float)text_.size();
-    float w = fixedW > 0 ? fixedW : (boxSize + gap + textW + 8.0f);
-    float h = fixedH > 0 ? fixedH : 32.0f;  // WinUI 3: MinHeight=32
+    float w = fixedW > 0 ? fixedW : (boxSize + gap + textW + 4.0f);
+    float h = fixedH > 0 ? fixedH : 20.0f;  // WinUI 3: MinHeight=32 → 紧凑 20
     return {w, h};
 }
 
@@ -742,7 +738,7 @@ D2D1_SIZE_F SliderWidget::SizeHint() const {
 
 namespace {
 
-/* 存活的 ImageWidget 实例表 (build 286)。
+/* 存活的 ImageWidget 实例表 。
  *
  * 只为 RetryFailedLoads 服务 —— 否则要为了找几个 <img> 去遍历所有窗口的整棵
  * widget 树。注册表按实例走, 规模等于页面里 <img> 的个数, 通常几十个。
@@ -1060,7 +1056,7 @@ void TextInputWidget::OnDraw(Renderer& r) {
             D2D1_RECT_F selRect = {x1, rect.top + 5, x2, rect.bottom - 6};
 
             // 选区色：focused → CSS active / theme accent；
-            //         !focused → CSS inactive / 半透明灰（Windows 标准）
+            // !focused → CSS inactive / 半透明灰（Windows 标准）
             D2D1_COLOR_F selBg;
             if (focused) {
                 selBg = css.hasSelTextBg ? css.selTextBg : accent;
@@ -1072,7 +1068,7 @@ void TextInputWidget::OnDraw(Renderer& r) {
             r.FillRect(selRect, selBg);
 
             // 选中文字色：focused → CSS active / 默认白色（配 accent 背景）；
-            //             !focused → CSS inactive / 保持原 fg
+            // !focused → CSS inactive / 保持原 fg
             D2D1_COLOR_F selFg = fg;
             bool customSelFg = false;
             if (focused) {
@@ -1206,7 +1202,7 @@ bool TextInputWidget::OnKeyDown(int vk) {
         return true;
     }
 
-    /* build 288: ESC 不是编辑键 —— 输入框对它没有任何行为, 却因为本函数末尾
+    /*  ESC 不是编辑键 —— 输入框对它没有任何行为, 却因为本函数末尾
      * 无条件 return true 把它吞了, 于是宿主的窗口级 on_key 在焦点落在输入框上
      * 时永远等不到 Esc。Windows 惯例里 Esc 是"取消当前编辑 / 关掉这个框",
      * 那是宿主的事, 该让它冒泡上去。行内编辑 (列表里放输入框, Enter 提交 /
@@ -1469,9 +1465,9 @@ int TextAreaWidget::PosLineEnd(int pos) const {
 }
 
 // (Legacy GetLines / GetLineCol / GetPosFromLineCol / CharIndexFromXY removed —
-//  superseded by IDWriteTextLayout-based EnsureLayout / HitTestPosFromXY /
-//  CaretXYForPos / Pos*. The layout knows about wrapping, kerning and
-//  shaping, so click position and caret position now match exactly.)
+// superseded by IDWriteTextLayout-based EnsureLayout / HitTestPosFromXY /
+// CaretXYForPos / Pos*. The layout knows about wrapping, kerning and
+// shaping, so click position and caret position now match exactly.)
 
 void TextAreaWidget::DeleteSelection() {
     if (!HasSelection()) return;
@@ -1758,7 +1754,7 @@ bool TextAreaWidget::OnMouseUp(const MouseEvent& e) {
     if (dragging_) {
         dragging_ = false;
         if (selectionStart_ == selectionEnd_) ClearSelection();
-        /* build 278: 拖选结束通知宿主 (OCR 场景要拿它反查图上位置)。 */
+        /*  拖选结束通知宿主 (OCR 场景要拿它反查图上位置)。 */
         if (onSelectionChanged) onSelectionChanged();
         return true;
     }
@@ -1838,7 +1834,7 @@ bool TextAreaWidget::OnKeyChar(wchar_t ch) {
 bool TextAreaWidget::OnKeyDown(int vk) {
     if (!focused || !enabled) return false;
 
-    /* build 288: ESC 冒泡给宿主, 理由同 TextInputWidget::OnKeyDown。 */
+    /*  ESC 冒泡给宿主, 理由同 TextInputWidget::OnKeyDown。 */
     if (vk == VK_ESCAPE) return false;
 
     extern MeasureContext* g_activeMeasureContext;
@@ -1889,7 +1885,7 @@ bool TextAreaWidget::OnKeyDown(int vk) {
     int oldPos = cursorPos_;
     const int oldSelStart = selectionStart_, oldSelEnd = selectionEnd_;
 
-    /* build 279: 不认识的键必须交还给窗口 —— 否则文本框一获焦, ESC /
+    /*  不认识的键必须交还给窗口 —— 否则文本框一获焦, ESC /
      * F1 / 自定义快捷键全被吞掉 (OCR 结果窗里 ESC 关不掉窗就是这么来的)。
      * 认得的只有下面这些导航/编辑键。 */
     const bool navigation = (vk == 0x25 || vk == 0x27 || vk == 0x26 ||
@@ -1924,7 +1920,7 @@ bool TextAreaWidget::OnKeyDown(int vk) {
         onTextChanged(text_);
     if ((selectionStart_ != oldSelStart || selectionEnd_ != oldSelEnd) &&
         onSelectionChanged) {
-        onSelectionChanged();       /* Shift+方向 改选区 (build 278) */
+        onSelectionChanged();       /* Shift+方向 改选区  */
     }
     return true;
 }
@@ -2284,7 +2280,7 @@ void TabControlWidget::OnDraw(Renderer& r) {
 void TabControlWidget::DrawTree(Renderer& r) {
     if (!visible) return;
     OnDraw(r);
-    paintedOnce_ = true;   // L45: mount-phase transition gate
+    paintedOnce_ = true;   // mount-phase transition gate
 
     // Clip children to the content area (below tab headers)
     D2D1_RECT_F contentArea = {rect.left, rect.top + tabHeight_, rect.right, rect.bottom};
@@ -2428,7 +2424,9 @@ void ScrollViewWidget::DoLayout() {
 
     // Scrollbar: fixed lane flush right. NeedsScrollbar() 时保留 kBarSpace
     // 宽度的专用通道（build 之前的 overlay 会把滑块压在数据行上方，与
-    // 计数/文字重叠）；不需要滚动条时通道收回，内容占满全宽。
+    // 计数/文字重叠）。
+    // 自动隐藏模式只隐藏滑块视觉，不再收回通道——通道忽宽忽窄会让列表
+    // 悬停瞬间横向跳动。
     float cw = visW;
     if (NeedsScrollbar()) cw = visW - kBarSpace;
     ClampScroll();
@@ -2475,10 +2473,10 @@ void ScrollViewWidget::DrawTree(Renderer& r) {
     if (!visible) return;
     // Draw background only (no scrollbar yet)
     Widget::OnDraw(r);
-    paintedOnce_ = true;   // L45: mount-phase transition gate
+    paintedOnce_ = true;   // mount-phase transition gate
     /* Draw content inside clip region — only once.
      *
-     * PushCull (build 285): clip 只让 D2D 丢掉画出界的像素, 遍历子树和录
+     * PushCull clip 只让 D2D 丢掉画出界的像素, 遍历子树和录
      * display list 的成本一分没省。长列表里这笔钱是主要开销 —— 2000 行实测
      * 每帧 6.6ms 全花在录制看不见的行上, 拖动滚动条明显不跟手。PushCull 让
      * Widget::DrawTree 对完全落在视口外的子树直接返回。
@@ -2492,7 +2490,7 @@ void ScrollViewWidget::DrawTree(Renderer& r) {
 
     // Scrollbar overlay drawn LAST so it stays above scrolling content —
     // otherwise row hover backgrounds would paint over the thumb.
-    if (NeedsScrollbar()) {
+    if (NeedsScrollbar() && !(autoHideScrollbar_ && !hovered)) {
         auto thumb = ThumbRect();
         bool dark = theme::IsDark();
         D2D1_COLOR_F thumbColor;
@@ -2545,7 +2543,12 @@ bool ScrollViewWidget::OnMouseDown(const MouseEvent& e) {
 }
 
 bool ScrollViewWidget::OnMouseMove(const MouseEvent& e) {
+    bool wasHovered = hovered;
     hovered = Contains(e.x, e.y);
+    // 自动隐藏模式下，悬停进出切换滚动条显隐，内容通道宽度随之变化，需重排一次
+    if (autoHideScrollbar_ && NeedsScrollbar() && wasHovered != hovered) {
+        ui::RequestLayout();
+    }
     if (draggingThumb_) {
         float visH = VisibleHeight();
         float ratio = visH / contentHeight_;
@@ -4006,7 +4009,7 @@ void IconButtonWidget::OnDraw(Renderer& r) {
     if (ghost_) {
         // Ghost mode: transparent by default, show bg on hover/press
         // (除非 hoverVisual_=false, 那就永远只画 icon —— titlebar 装饰按钮
-        //  /状态指示器场景).
+        // /状态指示器场景).
         if (hoverVisual_) {
             D2D1_COLOR_F bg = {0, 0, 0, 0};
             if (pressed)      bg = theme::kBtnPress();
@@ -4662,7 +4665,7 @@ void ExpanderWidget::OnDraw(Renderer& r) {
 
 void ExpanderWidget::DrawTree(Renderer& r) {
     if (!visible) return;
-    paintedOnce_ = true;   // L45: mount-phase transition gate; Expander DrawTree 自绘 header 不调 OnDraw, 这里手动标记
+    paintedOnce_ = true;   // mount-phase transition gate; Expander DrawTree 自绘 header 不调 OnDraw, 这里手动标记
 
     bool dark = theme::IsDark();
     float fontSize = (css.fontSize > 0) ? css.fontSize : theme::kFontSizeNormal;
@@ -5354,7 +5357,7 @@ void SplitViewWidget::DrawTree(Renderer& r) {
     if (!visible) return;
 
     OnDraw(r);
-    paintedOnce_ = true;   // L45: mount-phase transition gate
+    paintedOnce_ = true;   // mount-phase transition gate
 
     bool isOverlay = (mode_ == SplitViewMode::Overlay || mode_ == SplitViewMode::CompactOverlay);
 

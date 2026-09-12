@@ -213,9 +213,9 @@ std::string JsQuoteString(const std::string& s) {
 // node's text + {{ interp }} children. Mirrors BuildTextExpr but emits source
 // text for the QuickJS path.
 //
-//   <div>Hi, {{ user.name }}!</div>     →  "Hi, " + (user.name) + "!"
-//   <p>{{ count * 2 }}</p>              →  "" + (count * 2) + ""
-//   <label>@app.title</label>           →  $t("app.title")
+// <div>Hi, {{ user.name }}!</div>     →  "Hi, " + (user.name) + "!"
+// <p>{{ count * 2 }}</p>              →  "" + (count * 2) + ""
+// <label>@app.title</label>           →  $t("app.title")
 std::string BuildTextSourceJs(const ui::uix::Node& node) {
     std::string out;
     bool first = true;
@@ -432,7 +432,7 @@ void CompileElement(CompilerCtx& ctx,
                 } else if (a.kind == ui::uix::AttrKind::Directive) {
                     /* <menu v-if / v-show>: 整体条件渲染, show 不出来时
                      * PopulateMenu skip 不 build items. v-show 在 menu 语境
-                     * 等价 v-if (popup 模型没"占位但不显" 概念, 见 build 73 CHANGELOG). */
+                     * 等价 v-if (popup 模型没"占位但不显" 概念（历史备注略）). */
                     if (a.name == "if" || a.name == "show") cm->vIfExpr = a.rawValue;
                 } else if (a.kind == ui::uix::AttrKind::Bind) {
                     if (IsMenuFrostedMaterialAttr(a.name)) {
@@ -448,7 +448,7 @@ void CompileElement(CompilerCtx& ctx,
 
             int autoId = 1;
 
-            /* L172: "把子节点深拷成 <div class=menuitem-row> wrapper" 的逻辑从
+            /* "把子节点深拷成 <div class=menuitem-row> wrapper" 的逻辑从
              * menuitem 分支上提到这里, 让 submenu 父行也能复用 —— 子菜单父行不再
              * 只有 :title 纯文字, 可以跟 <menuitem> 一样写 <svg>+<label> 富内容.
              * AST 是 const 引用 (不可变契约) → 深拷而非 move. */
@@ -537,10 +537,10 @@ void CompileElement(CompilerCtx& ctx,
                 const auto& c = *cptr;
                 if (c.kind != ui::uix::NodeKind::Element) continue;
 
-                /* BREAKING (build 75): 嵌套 <menu title="..." v-if="..."> 当
+                /* BREAKING : 嵌套 <menu title="..." v-if="..."> 当
                  * submenu. submenu 的 "parent 入口" 视觉跟 menuitem 同款
                  * widget-template 渲染.
-                 * L172 (build 164): 父行外观现在跟 <menuitem> 一样自由 —— 可写
+                 * 父行外观现在跟 <menuitem> 一样自由 —— 可写
                  * <menu><svg/><label>title</label>...<menuitem/></menu> 富内容
                  * (buildRowWrapper skip 掉 menuitem/menu/separator 子节点当外观);
                  * 不写内容子节点时回落到 title (静态或 :title 反应式) 合成 <label>,
@@ -561,7 +561,7 @@ void CompileElement(CompilerCtx& ctx,
                                 mi.vIfExpr = a.rawValue;
                         }
                     }
-                    /* L172: 父行外观 — 优先用 <menu> 的"非结构性"子节点 (svg /
+                    /* 父行外观 — 优先用 <menu> 的"非结构性"子节点 (svg /
                      * label / img / 文字, 即除 menuitem/menu/separator 外的) 当富
                      * 内容, 跟 <menuitem><svg/><label/></menuitem> 同款; 没写这类
                      * 子节点时回落到 :title/text 合成 <label> (老用法不破). */
@@ -608,7 +608,7 @@ void CompileElement(CompilerCtx& ctx,
                     continue;
                 }
                 if (c.tag != "menuitem") {
-                    /* L172: 非 menuitem/menu/separator 的元素子节点 —
+                    /* 非 menuitem/menu/separator 的元素子节点 —
                      *   top-level 菜单 (无父行): 笔误, 报错 (保持原行为继续拦);
                      *   submenu 体 (top==false): 这是本 <menu> 自己的父行 entry
                      *   content (svg/label/...), 已被上层 buildRowWrapper 消费,
@@ -621,7 +621,7 @@ void CompileElement(CompilerCtx& ctx,
                     continue;
                 }
 
-                /* BREAKING (build 75): 老的 icon/style/text 静态属性 + :text/
+                /* BREAKING : 老的 icon/style/text 静态属性 + :text/
                  * :icon/:style 反应式属性 全 deprecated 砍掉. menuitem body
                  * 直接当 widget content slot. 保留:
                  *   id (静态 int) — 派发 callback
@@ -670,7 +670,7 @@ void CompileElement(CompilerCtx& ctx,
                     }
                 }
 
-                /* L172: menuitem 行内容 — 复用上提的 buildRowWrapper
+                /* menuitem 行内容 — 复用上提的 buildRowWrapper
                  * (skipStructural=false, 克隆全部子节点). Text/Interpolation 自动
                  * 包 <label>, 元素原样 clone. 跟 submenu 父行共用同一份逻辑,
                  * 不再内联重复 cloneNode + 克隆循环. */
@@ -790,7 +790,7 @@ void CompileElement(CompilerCtx& ctx,
             // (VBox vs HBox) is locked at factory time and can't change here.
             // gap 必须重设到 kDefaultFlexGap (= 编译时默认), 不能重设成 0 ——
             // 否则 "CSS 没写 gap" 的容器编译时是默认 4、首次交互后却变 0, 布局
-            // 在首次 hover/click 瞬间跳变 (L119: toolbar 原图按钮首次点击右移
+            // 在首次 hover/click 瞬间跳变 (toolbar 原图按钮首次点击右移
             // 8px)。MainJustify/CrossAlign 重设值本就 = 各自默认 (Start/Stretch),
             // 无此问题。
             if (auto* vb = dynamic_cast<VBoxWidget*>(rawW)) {
@@ -806,7 +806,12 @@ void CompileElement(CompilerCtx& ctx,
             // Reset flex-item fields (expanding/flex from flex-grow / flex shorthand)
             rawW->expanding = false;
             rawW->flex = 1.0f;
+            const bool wasVisible = rawW->visible;
             ApplyCommonStyle(*rawW, s);
+            // display:none / visibility:hidden 动态切换会改 visible：折叠↔展开 flex
+            // 布局，必须请求重布局，否则隐藏时算出的 0×0 rect 卡住、展开不占空间
+            // （同 ui_widget_set_visible 的 L95 修复）。
+            if (rawW->visible != wasVisible) ui::RequestLayout();
             rawW->ApplyDynamicPositionOverrides();
             ApplyFlexContainerStyle(*rawW, s);
             ApplyFlexItemStyle(*rawW, s);
@@ -824,7 +829,7 @@ void CompileElement(CompilerCtx& ctx,
     if (isSelect) {
         if (auto* cb = dynamic_cast<ComboBoxWidget*>(w.get())) {
             std::vector<std::wstring> items;
-            std::vector<std::string>  i18nKeys;   // L83: per-option i18n key ("" = literal)
+            std::vector<std::string>  i18nKeys;   // per-option i18n key ("" = literal)
             for (const auto& c : node.children) {
                 if (c->kind != ui::uix::NodeKind::Element) continue;
                 if (c->tag != "option") continue;
@@ -871,8 +876,8 @@ void CompileElement(CompilerCtx& ctx,
     }
 
     // ---- <tabs>: each <tab title="..."> child becomes a TabControl tab whose
-    //        body is a compiled VBox of inner children. Default child compile
-    //        is suppressed for the <tabs> element below.
+    // body is a compiled VBox of inner children. Default child compile
+    // is suppressed for the <tabs> element below.
     bool isTabs = (node.tag == "tabs" || node.tag == "TabControl");
     if (isTabs) {
         if (auto* tc = dynamic_cast<TabControlWidget*>(w.get())) {
@@ -992,7 +997,7 @@ void CompileElement(CompilerCtx& ctx,
             };
 
             // Apply CSS-cascaded properties to a shape. Browser semantics:
-            //   inline style="..."  > stylesheet rule  > presentation attr  > default.
+            // inline style="..."  > stylesheet rule  > presentation attr  > default.
             // Caller already applied presentation attrs to `shape`, so any value
             // in the computed style overrides them.
             auto applyShapeCss = [&](SvgShape& shape, const ui::uix::Node& shapeNode,
@@ -1067,7 +1072,7 @@ void CompileElement(CompilerCtx& ctx,
                     if (c->kind != ui::uix::NodeKind::Element) continue;
                     if (c->tag == "defs") { walk(*c, parentMatch, inherited); continue; }
                     if (c->tag == "g") {
-                        // build 90: <g> presentation attrs 参与级联到 child.
+                        // <g> presentation attrs 参与级联到 child.
                         // 合并 <g> 自己的 inheritable attrs 到一份副本, 向下传.
                         InheritedAttrs merged = inherited;
                         mergeInherited(*c, merged);
@@ -1350,7 +1355,7 @@ void CompileElement(CompilerCtx& ctx,
     // Children were AddChild'd during recursion. ScrollViewWidget expects a
     // single content widget via SetContent().
     //
-    // Build 109 (L29): 不论 kids.size() **总是**包 wrapper VBox + patch
+    // Build 109: 不论 kids.size() **总是**包 wrapper VBox + patch
     // v-if/v-for conditional 的 parentWidget = wrapper. 之前 size==1 时直接
     // SetContent(only) + size==0 时啥都不做, 导致 caller 在 ScrollView 内
     // 混用 v-if/v-for sibling 时 layout 错乱: conditional 注册时记的

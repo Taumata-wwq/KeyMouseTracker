@@ -4,6 +4,17 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
+$old = Get-Process -Name KeyMouseTracker -ErrorAction SilentlyContinue
+if ($old) {
+    Write-Host ("检测到正在运行的旧实例（PID {0}），构建前自动退出…" -f ($old.Id -join ', '))
+    try {
+        $old | Stop-Process -Force -ErrorAction Stop
+        Start-Sleep -Milliseconds 300
+    } catch {
+        throw "无法自动退出旧实例（旧实例以管理员运行，当前终端权限不足）。请先从托盘菜单退出 KeyMouseTracker，再重新构建。"
+    }
+}
+
 $coreuiSrc = Join-Path $root 'vendor\core-ui'
 $buildDir  = Join-Path $root 'build-coreui'
 $coreuiLib = Join-Path $buildDir 'core-ui.lib'

@@ -80,7 +80,7 @@ public:
     void InsertChild(size_t index, WidgetPtr child);   // clamps index to [0, size()]
     void RemoveChild(Widget* child);
 
-    /* 一次性把 [at, at+removeCount) 换成 replacement (build 285)。
+    /* 一次性把 [at, at+removeCount) 换成 replacement 。
      *
      * 为什么需要: v-for 重排原本是 "n 次 RemoveChild + n 次 InsertChild",
      * 而两者各自都是 O(n) (RemoveChild 用 remove_if 扫全表, InsertChild 是
@@ -92,7 +92,7 @@ public:
     void ReplaceChildRange(size_t at, size_t removeCount,
                            std::vector<WidgetPtr> replacement);
 
-    /* 批量摘除 (build 285)。一趟 remove_if + 一次 erase = O(n), 取代
+    /* 批量摘除 。一趟 remove_if + 一次 erase = O(n), 取代
      * "k 次 RemoveChild" 的 k*O(n)。victims 里不存在的项忽略。
      * 与 ReplaceChildRange 配对使用: 先整体摘除, 再整块插回。 */
     void RemoveChildren(const std::unordered_set<Widget*>& victims);
@@ -130,7 +130,7 @@ public:
 
     // ---- Absolute positioning ----
     bool positionAbsolute = false;
-    /* build 161: 布局豁免 — true 且已有有效 rect 时, 布局系统不改写本
+    /* 布局豁免 — true 且已有有效 rect 时, 布局系统不改写本
      * widget 的 rect (子树仍照常布局)。给"用户可拖动的浮动面板"用: 拖后
      * 任何 relayout (反应式重建/菜单/RequestLayout) 不再把它打回 CSS
      * 默认位。显式 ui_widget_set_rect 仍有效。仅对 positionAbsolute
@@ -491,7 +491,7 @@ protected:
     bool paintedOnce_ = false;   // see PaintedOnce() / MarkPainted() above
 };
 
-/* 递归平移 w 及其全部后代的 rect (build 285 起对外)。
+/* 递归平移 w 及其全部后代的 rect （对外接口）。
  * 两个用途: ① CSS transform: translate 绘制前应用、绘制后撤销;
  *          ② ScrollViewWidget 的纯滚动 —— 内容没变、只是偏移变了时, 平移 rect
  *             比重跑一遍 flex 布局便宜一个量级。 */

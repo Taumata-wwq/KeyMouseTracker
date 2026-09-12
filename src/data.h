@@ -18,6 +18,9 @@ struct AppMinuteData {
     std::map<uint16_t, uint16_t> motionByMinute;   // min -> 移动采样次数
     std::map<uint16_t, uint32_t> movePxByMinute;   // min -> 像素
     std::map<uint16_t, uint16_t> clickBtnMinute;   // min -> 点击次数
+    std::map<uint16_t, uint16_t> leftBtnMinute;    // min -> 左键点击次数（v12+）
+    std::map<uint16_t, uint16_t> midBtnMinute;     // min -> 中键点击次数（v12+）
+    std::map<uint16_t, uint16_t> rightBtnMinute;   // min -> 右键点击次数（v12+）
 };
 
 struct DayData {
@@ -55,7 +58,7 @@ struct AppData {
     bool paused = false;
     bool darkTheme = false;
     uint8_t kbLayout = 0;
-    bool optAppTrack = false;   // 前台活动应用统计（隐私默认关）
+    bool optAppTrack = true;    // 前台活动应用统计（仅记录 exe 名+计数，不含按键内容）
     uint8_t idleMin = 5;        // 空闲阈值（分钟，可配置）
     std::set<std::string> excludeApps;  // 前台应用排除列表（exe 名）
     uint32_t lastActivity = 0;
@@ -78,7 +81,6 @@ std::wstring dataFilePath();
 bool loadData(const std::wstring& path);
 bool saveData(const std::wstring& path);
 void ensureCurDay();
-void clearAllData();
 
 void recordKey(uint8_t vk);
 void recordClick(uint8_t btn, LONG x, LONG y);
@@ -90,6 +92,9 @@ void recordMoveDist(uint64_t px);
 uint64_t appKeys(const DayData& d, const std::string& exe, int minStart, int minEnd);
 uint64_t appClicks(const DayData& d, const std::string& exe, int minStart, int minEnd);
 uint64_t appMotionPx(const DayData& d, const std::string& exe, int minStart, int minEnd);
+// 应用活跃分钟数：该应用在 appMin 中存在的分钟数（该分钟有按键/点击/移动数据即视为前台活跃），
+// exe 空串表示汇总全部应用的分钟并集。用于 24h 应用综合分（"活跃"维度）。
+uint64_t appActiveMin(const DayData& d, const std::string& exe, int minStart, int minEnd);
 
 // 像素 → 厘米（按系统逻辑 DPI 折算，1px = 25.4mm / dpi）。供 UI 与导出共用
 uint64_t distToCm(uint64_t px);

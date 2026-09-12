@@ -219,13 +219,13 @@ bool UiWindowImpl::Create(const wchar_t* title, int width, int height,
     configWidth_ = width;
     configHeight_ = height;
 
-    /* L174: 去掉 WS_EX_COMPOSITED —— core-ui 是单 HWND + D2D 自绘, 无子窗口,
+    /* 去掉 WS_EX_COMPOSITED —— core-ui 是单 HWND + D2D 自绘, 无子窗口,
      * 该 flag (给子窗自下而上双缓冲 alpha 用) 在此零收益, 却让 DWM 每次合成多走
      * 一层重定向双缓冲, 拖动/缩放时平添开销。WS_EX_LAYERED 仍单独保留给开场动画/
      * 透明路径 (走 SetLayeredWindowAttributes), 不受影响。 */
     DWORD exStyle = 0;
     if (toolWindow) exStyle |= WS_EX_TOOLWINDOW;
-    /* Build 65+ (L14): owner 窗不上 Alt+Tab / 不单独 taskbar 项. owned 顶级窗
+    /* Build 65+: owner 窗不上 Alt+Tab / 不单独 taskbar 项. owned 顶级窗
      * 用 WS_EX_APPWINDOW 跟 owner 语义冲突 (强制出现在 taskbar), 撤掉. */
     else if (!ownerHwnd) exStyle |= WS_EX_APPWINDOW;
     if (acceptFiles) exStyle |= WS_EX_ACCEPTFILES;
@@ -241,7 +241,7 @@ bool UiWindowImpl::Create(const wchar_t* title, int width, int height,
 
     // Width / height 是 DIP, 按系统 DPI scale 到 physical pixels.
     // x / y 是 screen px (Win32 惯例, 跟 SetWindowRect / SetWindowPosition
-    // 一致, build 94+ L23). 持久化 DIP-stable 位置的应用用 ui_window_dpi()
+    // 一致, + L23). 持久化 DIP-stable 位置的应用用 ui_window_dpi()
     // 拿 DPI 自己 MulDiv (老 build 把 DIP 隐藏在 getter / create 里, 跟
     // setter 不自洽, L23 修).
     UINT sysDpi = 96;
@@ -369,7 +369,7 @@ void UiWindowImpl::SetIconFromPixels(const uint8_t* rgba, int w, int h) {
     }
 }
 
-/* L101: 最大化态客户区 = 显示器工作区 (与 OnGetMinMaxInfo 把 ptMaxSize 限到
+/* 最大化态客户区 = 显示器工作区 (与 OnGetMinMaxInfo 把 ptMaxSize 限到
  * rcWork 一致)。Show / PrepareRT 在 start_maximized hint 下用它把隐藏窗口预置到
  * 最终最大化尺寸, 避免首帧按常规尺寸布局/fit 再被 SW_SHOWMAXIMIZED resize (内容
  * "先常规一帧再放大")。 */
@@ -392,7 +392,7 @@ void UiWindowImpl::Show() {
      * 撞 lib 的 layered fade-in 时序. */
     bool alreadyZoomed = IsZoomed(hwnd_) != 0;
     bool preMaximized  = alreadyZoomed || startMaximizedPending_;
-    /* L101: hint 触发(尚未 zoom) → 下面要先把窗口预置到最大化尺寸再 OnPaint;
+    /* hint 触发(尚未 zoom) → 下面要先把窗口预置到最大化尺寸再 OnPaint;
      * 已 IsZoomed(外部 SW_MAXIMIZE) → 保持原 SWP_NOSIZE 不动尺寸。 */
     bool maxFromHint   = startMaximizedPending_ && !alreadyZoomed;
     startMaximizedPending_ = false;
@@ -466,7 +466,7 @@ void UiWindowImpl::PrepareRT() {
     if (exStyle & WS_EX_LAYERED)
         SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
 
-    /* L101: start_maximized hint 命中时, prepare 阶段就把隐藏窗口预置到最大化
+    /* start_maximized hint 命中时, prepare 阶段就把隐藏窗口预置到最大化
      * 客户区(=工作区, 同 OnGetMinMaxInfo)。这样 caller 在 show 前做的布局/图片
      * fit 就按最大化尺寸算; 随后 ShowImmediate 的 SW_SHOWMAXIMIZED 是同尺寸,
      * 无 reflow、无"先常规 fit 一帧再放大"。未命中走原常规尺寸路径。 */
@@ -515,7 +515,7 @@ void UiWindowImpl::PrepareRT() {
 void UiWindowImpl::ShowImmediate(bool activate) {
     if (!hwnd_) return;
 
-    /* Build 105+ (L25): start_maximized hint 走 SW_SHOWMAXIMIZED, 首帧
+    /* Build 105+: start_maximized hint 走 SW_SHOWMAXIMIZED, 首帧
      * 即最大化态. argv 启动 (文件关联) + 上次最大化关闭场景下用. */
     bool startMax = startMaximizedPending_;
     startMaximizedPending_ = false;
@@ -533,7 +533,7 @@ void UiWindowImpl::ShowImmediate(bool activate) {
     ValidateRect(hwnd_, nullptr);
 
     if (startMax) {
-        /* L102/L103: 窗口已在 PrepareRT 真最大化 + WS_EX_LAYERED alpha 0(shown 但透明,
+        /* L102/窗口已在 PrepareRT 真最大化 + WS_EX_LAYERED alpha 0(shown 但透明,
          * client=工作区, rcNormalPosition=常规)。OnPaint 已把内容绘进 RT, 这里一次
          * alpha→255 揭示 → 首帧即全屏 + 有内容, 无黑底/白边/先小后大闪。 */
         SetLayeredWindowAttributes(hwnd_, 0, 255, LWA_ALPHA);
@@ -898,8 +898,7 @@ void UiWindowImpl::SetWindowPosition(int xScreen, int yScreen) {
 void UiWindowImpl::GetWindowRectScreen(int* x, int* y, int* wDip, int* hDip) const {
     if (!hwnd_) return;
     RECT r; GetWindowRect(hwnd_, &r);
-    /* x/y 是 screen px (Win32 GetWindowRect 原值), w/h 是 DIP. build 94+ L23:
-     * 之前 x/y 也除 dpiScale_ 返 DIP 防 "save→restore round-trip 漂移", 但 sibling
+    /* x/y 是 screen px (Win32 GetWindowRect 原值), w/h 是 DIP. +      * 之前 x/y 也除 dpiScale_ 返 DIP 防 "save→restore round-trip 漂移", 但 sibling
      * API set_rect / set_position / Create 输入 x/y 一直是 screen px, 两边
      * 不自洽 — 用 get→set 复制窗口几何到 sub-window 必错位. 改回 screen px,
      * "DPI-stable 持久化" 需求改由 caller 用 ui_window_dpi(win) 自己 MulDiv. */
@@ -1336,7 +1335,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!isResizing_) {
             isResizing_ = true;
         }
-        /* L57: aspect ratio lock — borderless 看图器 enter 时 SetAspectLock(image_w, image_h),
+        /* aspect ratio lock — borderless 看图器 enter 时 SetAspectLock(image_w, image_h),
          * 用户拖窗任意边/角时这里按比例修正 RECT, Win32 把修正后的 RECT 当 user
          * 实际拖的 size, image 永远严格填满 widget = window. */
         if (aspectLockW_ > 0 && aspectLockH_ > 0) {
@@ -1500,7 +1499,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
         if (tbDragTracking_) {
-            /* L219: 标题栏拦截拖动 —— 按下后跟踪位移, 超过系统拖动阈值视为"拖动"。
+            /* 标题栏拦截拖动 —— 按下后跟踪位移, 超过系统拖动阈值视为"拖动"。
              * 没超阈值的纯点击在 WM_LBUTTONUP 复位、不触发。超阈值后模仿 Windows
              * "拖最大化窗口标题栏 → 还原并跟随光标": 记抓取点在(全屏)标题栏的水平比例
              * + 垂直偏移 → fire onTitleBarDrag(宿主退出全屏/还原窗口大小) → 把还原后的
@@ -1549,7 +1548,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             ReleaseCapture();
             return 0;
         }
-        if (tbDragTracking_) {   /* L219: 标题栏只是点击(没拖过阈值), 复位、不退全屏 */
+        if (tbDragTracking_) {   /* 标题栏只是点击(没拖过阈值), 复位、不退全屏 */
             tbDragTracking_ = false;
             ReleaseCapture();
             return 0;
@@ -1557,7 +1556,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         OnMouseUp((float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam)); return 0;
     case WM_CAPTURECHANGED:
         canvasDragTracking_ = false;
-        tbDragTracking_ = false;   /* L219: capture 被夺走时复位标题栏拖动跟踪 */
+        tbDragTracking_ = false;   /* capture 被夺走时复位标题栏拖动跟踪 */
         // 鼠标 capture 被夺走 (DoDragDrop 起拖 / 系统). press 中的 widget 收不到
         // WM_LBUTTONUP, 复位它避免卡在 drag 态. CancelMouseCapture 自守 pressedWidget_
         // 为空时 no-op (正常 ReleaseCapture 流程已先清空, 不会重复触发).
@@ -1768,7 +1767,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_KEYDOWN: {
         int vk = (int)wParam;
-        /* L96: IME(中文等)激活、正在处理该键时, Windows 把 wParam 设成
+        /* IME(中文等)激活、正在处理该键时, Windows 把 wParam 设成
          * VK_PROCESSKEY(0xE5), 真实键拿不到 → key 消费者(如快捷键捕获)记成
          * 0xE5 显示"?"。从 lParam 的扫描码反查真实 VK(MapVirtualKey 走扫描码、
          * IME 无关、user32 已链接, 不引 imm32)。IME 文字输入走 WM_CHAR/
@@ -1799,7 +1798,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
          * "return DefWindowProcW(hwnd_, ...)", 解引用 this->hwnd_, 撞 UAF.
          * 既然 onKey 装了 callback 就当 caller 已完全负责派发, 不再下传
          * DefWindowProc — 实践中 lib 应用无 system menu, 不依赖默认处理
-         * (Alt+F4 / F10 走 WM_SYSKEYDOWN, 跟此分支无关). build 95+ L24 修. */
+         * (Alt+F4 / F10 走 WM_SYSKEYDOWN, 跟此分支无关)（已修复）。 */
         return 0;
     }
 
@@ -2069,13 +2068,13 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_NCPAINT: return 0;
         case WM_NCHITTEST: return OnNcHitTest(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         case WM_NCLBUTTONDOWN:
-            /* L90: 菜单开着时, 点窗口非客户区 (含 canvas mode 下 OnNcHitTest 把
+            /* 菜单开着时, 点窗口非客户区 (含 canvas mode 下 OnNcHitTest 把
              * 整窗/画布判成 HTCAPTION 的可拖区) 先关菜单并消掉本次点击 —— 对齐
              * HTCLIENT 路径 OnMouseDown→CloseMenu 的行为. 否则 borderless 看图
              * 左键点画布走 WM_NCLBUTTONDOWN, 完全不经 OnMouseDown, 菜单关不掉.
              * 无菜单时 canvas mode 走库内自由拖动, 其它标题栏命中仍按系统行为. */
             if (activeMenu_) { ActivateForMouseInput(); CloseMenu(); return 0; }
-            /* L219: 标题栏拖动拦截(宿主开启, 如全屏态)。命中点是 TitleBar 背景
+            /* 标题栏拖动拦截(宿主开启, 如全屏态)。命中点是 TitleBar 背景
              * (非按钮: 按钮命中是其自身 HTCLIENT, 不是 HTCAPTION)且 onTitleBarDrag
              * 已注册时, 不进系统移动循环, 改为自己 SetCapture + 跟踪位移(见 WM_MOUSEMOVE),
              * 超阈值才退出全屏。intercept=false(普通态)则 fall-through 走系统拖窗。 */
@@ -2108,7 +2107,7 @@ LRESULT UiWindowImpl::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
         case WM_NCRBUTTONUP:
-            /* L53: HTCAPTION 区域右键 → 走 onRightClick (widget tree
+            /* HTCAPTION 区域右键 → 走 onRightClick (widget tree
              * 的右键派发, 例如 WireSubtreeMenus 弹 app context menu),
              * 不走 DefWindowProc 的系统菜单 (Move/Size/Minimize/Close).
              *
@@ -2591,7 +2590,7 @@ bool UiWindowImpl::SampleResizeFrameIfDue() {
 }
 
 void UiWindowImpl::NotifyResizeCallback(UINT width, UINT height) {
-    /* L91: 回调单位补统一为 DIP. width/height 来自 WM_SIZE = 物理像素, 但
+    /* 回调单位补统一为 DIP. width/height 来自 WM_SIZE = 物理像素, 但
      * ui_window_set_size / ui_widget_get_rect / 窗口几何 API 都已是 DIP
      * (L6/L23 v1.2.0 统一过, 当时漏了本回调). 转成 DIP 跟它们一致, 消费者
      * (如无边框看图记忆窗口长边) 拿到的尺寸跟 set_size 同单位, 高 DPI 屏不再
@@ -2744,7 +2743,7 @@ void UiWindowImpl::OnMouseMove(float x, float y) {
             // Tooltip: reset on widget change, schedule timer for delayed show.
             // 沿父链上溯找最近一个有 tooltip 的祖先 (跟 hover 状态传播 + cursor
             // 继承一致) —— 容器 widget set_tooltip 后, hover 其内部子 widget
-            // (如图标按钮的 svg 子级) 也能弹 (L72).
+            // (如图标按钮的 svg 子级) 也能弹.
             tooltipVisible_ = false;
             tooltipWidget_ = nullptr;
             if (tooltipTimerId_) { KillTimer(hwnd_, tooltipTimerId_); tooltipTimerId_ = 0; }
@@ -3324,7 +3323,7 @@ bool UiWindowImpl::DispatchKeyDown(int vk) {
     }
 
     // 2. Shortcuts (Ctrl+Key, Alt+Key) —— GetKeyState 读真实键盘状态，
-    //    sim 注入时若没有同时按 Ctrl/Alt 这条分支会跳过，这是期望行为。
+    // sim 注入时若没有同时按 Ctrl/Alt 这条分支会跳过，这是期望行为。
     if (!shortcuts_.empty()) {
         int mods = 0;
         if (GetKeyState(VK_CONTROL) & 0x8000) mods |= 1;  // MOD_CTRL

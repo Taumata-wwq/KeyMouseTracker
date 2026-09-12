@@ -7,21 +7,26 @@ export default {
     var pad = function (n) { return (n < 10 ? '0' : '') + n; };
     return {
       activeView: 'overview',
-      // 键盘/鼠标 tab 内子视图切换：heat=热力图 stats=统计表 detail=明细
-      keySubView: 'heat',
-      mouseSubView: 'heat',
-      trendModeIdx: 0,   // 0=日 1=月 2=年 3=周柱状 4=一周×24h 5=单日12×30
-      // 多系列勾选（T7 前置）：[按键, 点击, 里程, 活跃] 0/1；C++ 轮询读取映射到 g_trendChart.enabled
+      // 热力 tab 设备切换：0=键盘 1=鼠标
+      heatDev: 0,
+      detailAllTime: true,   // 明细时间范围：true=全部时间；false=按弹窗范围
+      trendModeIdx: 0,   // 0=统计 1=明细 2=时段
+      // 时段 scope（0=日 1=周 2=月）与系列单选（0=按键 1=点击 2=里程 3=活跃）
+      heatScope: 0,
+      heatSeries: 0,
+      // 多系列勾选：统计 [按键, 点击, 里程, 活跃] 0/1；C++ 轮询映射到 g_trendChart.enabled
       trendSeries: [1, 1, 0, 0],
-      // 总览多系列叠加（T7）：[按键, 点击, 里程, 活跃] 0/1；C++ 轮询读取映射到 g_overviewSeries（空=仅 APM）
-      overviewSeries: [0, 0, 0, 0],
+      // 图表类型（'bar'/'line'）；历史-统计默认折线，与总览一致
+      trendChartType: 'line',
+      // 总览多系列叠加：[按键, 点击, 里程, 活跃] 0/1；默认勾选按键（四键至少生效一个）
+      overviewSeries: [1, 0, 0, 0],
       // 统计数据由 C++ 按独立键局部推送（S 后缀）：仅内容变化的键会触发绑定重求值
-      todayS: null, totalS: null, mouseTodayS: null, mouseAllS: null,
-      keyTableS: [], appsS: [], apps24hS: [], storageS: null,
+      todayS: null, totalS: null,
+      appsS: [], apps24hS: [], storageS: null,
+      detailS: null,   // P4 历史-明细聚合：{kbd1,kbd2,kbdSum,left,right,mid,total,distCm,activeSec,idleSec,maxSessionSec,sessionCount}
       pausedS: false, autostartS: false, optAppTrackS: false, excludeListS: [],
       pauseCmd: 0,
       autostartCmd: 0,
-      exitCmd: 0,
       themeCmd: 0,
       exportCmd: 0,
       importCmd: 0,
@@ -36,7 +41,6 @@ export default {
       removeExclName: '', // 要移除的 exe 名
       dateStr: now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()),
       monthStr: now.getFullYear() + '-' + pad(now.getMonth() + 1),
-      yearNum: now.getFullYear(),
       weekStr: (function () {   // 本周周一（周模式选中的起始日）
         var w = new Date(now);
         w.setDate(w.getDate() - ((now.getDay() + 6) % 7));
@@ -44,21 +48,14 @@ export default {
       })(),
       tabs: [
         { id: 'overview', label: '总览' },
-        { id: 'keys', label: '键盘' },
-        { id: 'mouse', label: '鼠标' },
+        { id: 'heat', label: '热力' },
         { id: 'trend', label: '历史' },
         { id: 'settings', label: '设置' }
-      ],
-      trendModes: [
-        { id: 'd', label: '日' },
-        { id: 'm', label: '月' },
-        { id: 'y', label: '年' }
       ],
       // 日期选择弹窗
       calOpen: false,
       calY: now.getFullYear(),
       calM: now.getMonth() + 1,
-      yearPage: Math.max(2020, now.getFullYear() - 4),
       calWeekNames: ['一', '二', '三', '四', '五', '六', '日'],
       // 键盘配列：0=108键 1=87键 2=61键（关于页设置，C++ 持久化）
       kbLayout: 1,
@@ -72,13 +69,25 @@ export default {
       rangeEnd: '',
       rangePickCmd: 0,
       rangeCancelCmd: 0,
+      // 明细时间范围：全部时间关闭后弹窗选范围，起止 年/月/日/时/分
+      detailRangeOpen: false,
+      detailStartY: 0, detailStartM: 0, detailStartD: 0, detailStartH: 0, detailStartN: 0,
+      detailEndY: 0, detailEndM: 0, detailEndD: 0, detailEndH: 0, detailEndN: 0,
+      detailStart: '',
+      detailEnd: '',
+      detailRangeCmd: 0,
+      detailRangeCancelCmd: 0,
       exportCsvCmd: 0,
       exportJsonCmd: 0,
-      optAppCmd: 0,
-      // 按应用筛选（v0.3.0）：filterApp = 选中应用 exe 名（'' = 全部）；切换置 filterAppCmd++
+      // 按应用筛选：filterApp = 选中应用 exe 名（'' = 全部）；切换置 filterAppCmd++
       filterApp: '',
       filterAppCmd: 0,
-      filterPickOpen: false   // 应用筛选弹窗
+      filterPickOpen: false,   // 应用筛选弹窗
+      // 悬停/点选应用：右侧趋势图显示该应用 24h 变化（悬停临时、点选固定）
+      hoverApp: '',
+      hoverAppCmd: 0,
+      pinnedApp: '',
+      pinnedAppCmd: 0
     };
   },
   computed: {
@@ -86,20 +95,9 @@ export default {
     autostart() { return !!this.autostartS; },
     today() { return this.todayS || { keys: 0, clicks: 0, motion: 0 }; },
     total() { return this.totalS || { keys: 0, clicks: 0, days: 0, activeSec: 0 }; },
-    mouse() { return this.mouseTodayS || { left: 0, right: 0, mid: 0, total: 0 }; },
-    mouseAll() { return this.mouseAllS || { left: 0, right: 0, mid: 0, total: 0, motion: 0 }; },
     storage() { return this.storageS || { bytes: 0, days: 0, first: '', last: '' }; },
     apps() { return this.appsS || []; },
-    apps24h() {
-      var a = this.apps24hS || [];
-      if (!a.length) return a;
-      var max = a[0].c || 1;
-      for (var i = 0; i < a.length; i++) {
-        a[i].barW = Math.round(a[i].c * 100 / max);
-        a[i].barCls = 'bw-' + (Math.round(a[i].barW / 5) * 5);
-      }
-      return a;
-    },
+    apps24h() { return this.apps24hS || []; },
     optAppTrack() { return !!this.optAppTrackS; },
     // 应用筛选选项：合并 今日应用排行(appsS) + 近24h(apps24hS)，按次数降序去重取前 20
     filterOptions() {
@@ -120,28 +118,29 @@ export default {
       return out;
     },
     excludeList() { return this.excludeListS || []; },
-    keyTable() { return this.keyTableS || []; },
-    keyMax() {
-      var t = this.keyTable;
-      if (!t || !t.length) return 1;
-      var mx = 0;
-      for (var i = 0; i < t.length; i++) {
-        var v = t[i].c;
-        if (v > mx) mx = v;
+    // 排除应用两列拆分：前半左列、后半右列（框架的 flex-wrap 百分比宽度不可靠，手动分列）
+    excludeCols() {
+      var n = this.excludeList.length;
+      var half = Math.ceil(n / 2);
+      return [this.excludeList.slice(0, half), this.excludeList.slice(half)];
+    },
+    // P4 历史-明细聚合数据（detailS）：按键 kbd + 鼠标左/右/中归一化宽度
+    detail() { return this.detailS || { kbd: [], kbdSum: 0, left: 0, right: 0, mid: 0, total: 0, distCm: 0, activeSec: 0, idleSec: 0, maxSessionSec: 0, sessionCount: 0 }; },
+    // 明细时间范围按钮文案：全部时间显示数据覆盖范围，自定义显示起止
+    detailRangeLabel() {
+      if (this.detailAllTime) {
+        return (this.storage.first && this.storage.last)
+          ? (this.storage.first + ' ~ ' + this.storage.last) : '全部时间';
       }
-      return mx > 0 ? mx : 1;
+      return this.detailStart + ' ~ ' + this.detailEnd;
     },
-    mouseMax() {
-      var m = this.mouseAll;
-      // 仅点击量相互比较（移动采样是不同的量纲、数值通常远超点击，单独成条），
-      // 否则移动数值会把点击条全压扁成“满值”观感，失去对比。
-      return Math.max(m.left || 0, m.right || 0, m.mid || 0, m.total || 0, 1);
+    // 历史控制条右侧单按钮文案：统计=柱状/折线，时段=月/周/日
+    chartToggleLabel() {
+      if (this.trendModeIdx == 0) return this.trendChartType == 'bar' ? '柱状' : '折线';
+      if (this.trendModeIdx == 2) return this.heatScope == 2 ? '月' : (this.heatScope == 1 ? '周' : '日');
+      return '';
     },
-    mouseTodayMax() {
-      var m = this.mouse;
-      return Math.max(m.left || 0, m.right || 0, m.mid || 0, m.total || 0, 1);
-    },
-    // 日历网格（周一为首列，6 行 × 7 列；d=0 表示空白格）
+    // 日历网格（周一为首列，6 行 × 7 列；d=0 表示空白格；dis=无数据日期禁用）
     calWeeks() {
       var y = this.calY, m = this.calM;
       var first = new Date(y, m - 1, 1);
@@ -150,38 +149,44 @@ export default {
       var selD = 0;
       var p = String(this.dateStr).split('-');
       if (p.length >= 3 && parseInt(p[0]) == y && parseInt(p[1]) == m) selD = parseInt(p[2]);
+      // 数据覆盖范围 [first, last]：范围外的日期无记录，禁用不可选
+      var key = function (yy, mm, dd) { return yy * 10000 + mm * 100 + dd; };
+      var parse = function (s) {
+        var q = String(s || '').split('-');
+        if (q.length >= 3) return { y: parseInt(q[0]) || 0, m: parseInt(q[1]) || 0, d: parseInt(q[2]) || 0 };
+        return null;
+      };
+      var st = parse(this.storage.first), en = parse(this.storage.last);
+      var fk = st ? key(st.y, st.m, st.d) : 0, lk = en ? key(en.y, en.m, en.d) : 0;
       var cells = [];
-      for (var i = 0; i < offset; ++i) cells.push({ d: 0, sel: false });
-      for (var d = 1; d <= dim; ++d) cells.push({ d: d, sel: d == selD });
-      while (cells.length % 7 != 0) cells.push({ d: 0, sel: false });
+      for (var i = 0; i < offset; ++i) cells.push({ d: 0, sel: false, dis: true });
+      for (var d = 1; d <= dim; ++d) {
+        var k = key(y, m, d);
+        cells.push({ d: d, sel: d == selD, dis: !(fk && lk && k >= fk && k <= lk) });
+      }
+      while (cells.length % 7 != 0) cells.push({ d: 0, sel: false, dis: true });
       var rows = [];
       for (var i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
       return rows;
     },
-    // 月选择网格（3 行 × 4 列）
+    // 月选择网格（3 行 × 4 列；dis=无数据的月禁用）
     monthRows() {
       var pm = String(this.monthStr).split('-');
       var selY = parseInt(pm[0]) || 0, selM = parseInt(pm[1]) || 0;
+      var parse = function (s) {
+        var q = String(s || '').split('-');
+        if (q.length >= 2) return { y: parseInt(q[0]) || 0, m: parseInt(q[1]) || 0 };
+        return null;
+      };
+      var st = parse(this.storage.first), en = parse(this.storage.last);
+      var fk = st ? st.y * 12 + (st.m - 1) : 0, lk = en ? en.y * 12 + (en.m - 1) : 0;
       var rows = [];
       for (var r = 0; r < 3; ++r) {
         var row = [];
         for (var c = 0; c < 4; ++c) {
           var m = r * 4 + c + 1;
-          row.push({ m: m, sel: this.calY == selY && m == selM });
-        }
-        rows.push(row);
-      }
-      return rows;
-    },
-    // 年选择网格（3 行 × 4 列，共 12 年）
-    yearRows() {
-      var selY = parseInt(this.yearNum) || 0;
-      var rows = [];
-      for (var r = 0; r < 3; ++r) {
-        var row = [];
-        for (var c = 0; c < 4; ++c) {
-          var y = this.yearPage + r * 4 + c;
-          row.push({ y: y, sel: y == selY });
+          var mk = this.calY * 12 + (m - 1);
+          row.push({ m: m, sel: this.calY == selY && m == selM, dis: !(fk && lk && mk >= fk && mk <= lk) });
         }
         rows.push(row);
       }
@@ -194,12 +199,17 @@ export default {
     toggleSeries(i) {
       var next = this.trendSeries.slice();
       next[i] = next[i] ? 0 : 1;
-      // 至少保留一个系列：enabled 为空在 timechart 中语义为“全部显示”，会违背勾选意图
-      if (next[0] || next[1] || next[2] || next[3]) this.trendSeries = next;
+      // 与总览一致：四键至少生效一个，取消最后一个时忽略本次取消
+      if (!(next[0] || next[1] || next[2] || next[3])) next[i] = 1;
+      this.trendSeries = next;
     },
+    // 图表类型切换：仅 日/月/年 缩放图生效
+    setChartType(t) { this.trendChartType = t; },
     toggleOverviewSeries(i) {
       var next = this.overviewSeries.slice();
       next[i] = next[i] ? 0 : 1;
+      // 四键至少生效一个：取消最后一个时忽略本次取消（勾选框自切换后需重新写回真值）
+      if (!(next[0] || next[1] || next[2] || next[3])) next[i] = 1;
       this.overviewSeries = next;
     },
     // ---- 日期便携步进 ----
@@ -215,30 +225,55 @@ export default {
       var p = String(target || '').split('-');
       var dt = new Date(parseInt(p[0]) || 2000, (parseInt(p[1]) || 1) - 1, (parseInt(p[2]) || 1) + n);
       var s = dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1) + '-' + this.pad2(dt.getDate());
+      // 钳制到数据覆盖范围：不允许步进到无数据的日期
+      var key = dt.getFullYear() * 10000 + (dt.getMonth() + 1) * 100 + dt.getDate();
+      var st = this.parseD(this.storage.first), en = this.parseD(this.storage.last);
+      var fk = st ? st.y * 10000 + st.m * 100 + st.d : 0;
+      var lk = en ? en.y * 10000 + en.m * 100 + en.d : 0;
+      if (fk && key < fk) s = this.storage.first;
+      else if (lk && key > lk) s = this.storage.last;
       if (mode == 4) this.weekStr = s; else this.dateStr = s;
     },
     stepMonth(n) {
       var p = String(this.monthStr || '').split('-');
       var dt = new Date(parseInt(p[0]) || 2000, (parseInt(p[1]) || 1) - 1 + n, 1);
-      this.monthStr = dt.getFullYear() + '-' + this.pad2(dt.getMonth() + 1);
-    },
-    stepYear(n) {
-      var y = (parseInt(this.yearNum) || 2000) + n;
-      if (y < 2020) y = 2020;
-      this.yearNum = y;
+      var y = dt.getFullYear(), m = dt.getMonth() + 1;
+      // 钳制到数据覆盖的月份范围：不允许步进到无数据的月
+      var st = this.parseD(this.storage.first), en = this.parseD(this.storage.last);
+      var fk = st ? st.y * 12 + (st.m - 1) : 0, lk = en ? en.y * 12 + (en.m - 1) : 0;
+      var mk = y * 12 + (m - 1);
+      if (fk && mk < fk) { y = st.y; m = st.m; }
+      else if (lk && mk > lk) { y = en.y; m = en.m; }
+      this.monthStr = y + '-' + this.pad2(m);
     },
     togglePause() { this.pauseCmd = this.pauseCmd + 1; },
     toggleAutostart() { this.autostartCmd = this.autostartCmd + 1; },
     toggleTheme() { this.themeCmd = this.themeCmd + 1; },
-    toggleOptApp() { this.optAppCmd = this.optAppCmd + 1; },
-    // ---- 按应用筛选（v0.3.0）----
+    // ---- 按应用筛选----
     openFilterPick() { this.filterPickOpen = true; },
     closeFilterPick() { this.filterPickOpen = false; },
     // name 为 '' 表示「全部应用」；写入 filterApp 并递增命令，C++ 轮询切换筛选
     setFilterApp(name) { this.filterApp = name || ''; this.filterAppCmd++; this.filterPickOpen = false; },
+    // 悬停应用：写入 hoverApp 并递增命令，C++ 轮询后右侧趋势图切换为该应用。
+    // 带去重：@mousemove 每像素触发，仅在悬停目标变化时才递增命令，避免高频重复轮询。
+    setHoverApp(name) {
+      name = name || '';
+      if (this.hoverApp === name) return;
+      this.hoverApp = name;
+      this.hoverAppCmd++;
+    },
+    // 点选应用：固定显示（再次点选取消固定）
+    togglePinApp(name) {
+      this.pinnedApp = (this.pinnedApp === name) ? '' : name;
+      this.pinnedAppCmd++;
+    },
     applyExcl() { this.exclCmd++; },
     removeExcl(i) { this.removeExclName = this.excludeList[i]; this.removeExclCmd++; },
-    requestExit() { this.exitCmd = this.exitCmd + 1; },
+    // 两列分列后换算回 excludeList 原始下标（前半左列、后半右列）
+    exclRealIndex(ci, ei) {
+      var half = Math.ceil(this.excludeList.length / 2);
+      return ci === 0 ? ei : half + ei;
+    },
     exportData() { this.exportCmd = this.exportCmd + 1; },
     importData() { this.importCmd = this.importCmd + 1; },
     clearData() { this.initRangeFields(); this.clearCmd = this.clearCmd + 1; },
@@ -263,15 +298,126 @@ export default {
       if (!y || !m || !d) return '';
       return y + '-' + this.pad2(m) + '-' + this.pad2(d);
     },
+    // 某年月 的天数上限（用于日字段动态 max，联动闰年与月）
+    daysInMonth(y, m) {
+      if (!y || !m) return 31;
+      return new Date(y, m, 0).getDate();
+    },
+    clampDayTo(y, m, d) {
+      var mx = this.daysInMonth(y, m);
+      return (d < 1 || d > mx) ? mx : d;
+    },
     confirmRange() {
+      // 提交前把日字段钳回当月真实天数，避免用户键入 31 日但选到 2 月时越界
+      this.rangeStartD = this.clampDayTo(this.rangeStartY, this.rangeStartM, this.rangeStartD);
+      this.rangeEndD   = this.clampDayTo(this.rangeEndY,   this.rangeEndM,   this.rangeEndD);
       this.rangeStart = this.ymdStr(this.rangeStartY, this.rangeStartM, this.rangeStartD);
       this.rangeEnd = this.ymdStr(this.rangeEndY, this.rangeEndM, this.rangeEndD);
       this.rangePickCmd = this.rangePickCmd + 1;
     },
+    // 快捷选择（Q10 确认）：今日 / 本周 / 本月 / 全部历史。全部写入范围字段。
+    rangeToday() {
+      var now = new Date();
+      var y = now.getFullYear(), m = now.getMonth() + 1, d = now.getDate();
+      this.rangeStartY = y; this.rangeStartM = m; this.rangeStartD = d;
+      this.rangeEndY   = y; this.rangeEndM   = m; this.rangeEndD   = d;
+    },
+    rangeWeek() {
+      var now = new Date();
+      // 周一为首日：weekday 0=Sun..6=Sat → (wd+6)%7 = 0..6 表示距本周一的天数
+      var wd = (now.getDay() + 6) % 7;
+      var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - wd);
+      var end   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 6 - wd);
+      this.rangeStartY = start.getFullYear(); this.rangeStartM = start.getMonth() + 1; this.rangeStartD = start.getDate();
+      this.rangeEndY   = end.getFullYear();   this.rangeEndM   = end.getMonth() + 1;   this.rangeEndD   = end.getDate();
+    },
+    rangeMonth() {
+      var now = new Date();
+      var y = now.getFullYear(), m = now.getMonth() + 1;
+      var dim = this.daysInMonth(y, m);
+      this.rangeStartY = y; this.rangeStartM = m; this.rangeStartD = 1;
+      this.rangeEndY   = y; this.rangeEndM   = m; this.rangeEndD   = dim;
+    },
     // 全部历史 = 恢复为完整数据范围（最早 ~ 最晚），而不是归零
     rangeAll() { this.initRangeFields(); },
     cancelRange() { this.rangeCancelCmd = this.rangeCancelCmd + 1; this.rangePickOpen = false; },
-      openLink(u) { this.linkUrl = u; this.linkCmd++; },
+    // ---- 明细时间范围快捷：今日/本周/本月/全部，与导出弹窗一致的语义，起止含 时:分 ----
+    setDetailFields(sy, sm, sd, ey, em, ed) {
+      this.detailStartY = sy; this.detailStartM = sm; this.detailStartD = sd; this.detailStartH = 0; this.detailStartN = 0;
+      this.detailEndY = ey; this.detailEndM = em; this.detailEndD = ed; this.detailEndH = 23; this.detailEndN = 59;
+    },
+    rangeTodayDetail() {
+      var now = new Date();
+      this.setDetailFields(now.getFullYear(), now.getMonth() + 1, now.getDate(),
+                           now.getFullYear(), now.getMonth() + 1, now.getDate());
+    },
+    rangeWeekDetail() {
+      var now = new Date();
+      var wd = (now.getDay() + 6) % 7;
+      var s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - wd);
+      var e = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 6 - wd);
+      this.setDetailFields(s.getFullYear(), s.getMonth() + 1, s.getDate(),
+                           e.getFullYear(), e.getMonth() + 1, e.getDate());
+    },
+    rangeMonthDetail() {
+      var now = new Date();
+      var y = now.getFullYear(), m = now.getMonth() + 1;
+      this.setDetailFields(y, m, 1, y, m, this.daysInMonth(y, m));
+    },
+    rangeAllDetail() {
+      var st = this.parseD(this.storage.first);
+      var en = this.parseD(this.storage.last);
+      var now = new Date();
+      if (!st) st = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+      if (!en) en = st;
+      this.setDetailFields(st.y, st.m, st.d, en.y, en.m, en.d);
+    },
+    // ---- 明细时间范围：全部时间 ⇄ 弹窗选范围 ----
+    openDetailRange() {
+      var st = this.parseD(this.storage.first);
+      var en = this.parseD(this.storage.last);
+      var now = new Date();
+      if (!st) st = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+      if (!en) en = st;
+      this.detailStartY = st.y; this.detailStartM = st.m; this.detailStartD = st.d; this.detailStartH = 0; this.detailStartN = 0;
+      this.detailEndY = en.y; this.detailEndM = en.m; this.detailEndD = en.d; this.detailEndH = 23; this.detailEndN = 59;
+      this.detailRangeOpen = true;
+    },
+    parseD(s) {
+      var p = String(s || '').split('-');
+      if (p.length >= 3) return { y: parseInt(p[0]) || 0, m: parseInt(p[1]) || 0, d: parseInt(p[2]) || 0 };
+      return null;
+    },
+    confirmDetailRange() {
+      var pad2 = function (n) { return (n < 10 ? '0' : '') + n; };
+      var clamp = function (y, m, d) {
+        var mx = this.daysInMonth(y, m);
+        return (d < 1 || d > mx) ? mx : d;
+      }.bind(this);
+      // 起止全未填（字段全 0）：回落为"全部时间"，不产生无效范围
+      if (!this.detailStartY && !this.detailEndY) {
+        this.detailAllTime = true;
+        this.detailStart = ''; this.detailEnd = '';
+        this.detailRangeOpen = false;
+        return;
+      }
+      this.detailStartD = clamp(this.detailStartY, this.detailStartM, this.detailStartD);
+      this.detailEndD = clamp(this.detailEndY, this.detailEndM, this.detailEndD);
+      this.detailStart = this.detailStartY + '-' + pad2(this.detailStartM) + '-' + pad2(this.detailStartD) +
+        ' ' + pad2(this.detailStartH || 0) + ':' + pad2(this.detailStartN || 0);
+      this.detailEnd = this.detailEndY + '-' + pad2(this.detailEndM) + '-' + pad2(this.detailEndD) +
+        ' ' + pad2(this.detailEndH || 0) + ':' + pad2(this.detailEndN || 0);
+      this.detailAllTime = false;
+      this.detailRangeCmd = this.detailRangeCmd + 1;
+      this.detailRangeOpen = false;
+    },
+    cancelDetailRange() {
+      this.detailRangeCancelCmd = this.detailRangeCancelCmd + 1;
+      // 取消 = 回落到"全部时间"（与移除"全部时间"按钮后的语义一致）
+      this.detailAllTime = true;
+      this.detailRangeOpen = false;
+    },
+    openLink(u) { this.linkUrl = u; this.linkCmd++; },
     fmt(v) {
       if (v == null || v === '') return '0';
       // 默认显示准确值；窗口过窄（compact 由 C++ resize 回调同步）时才缩写
@@ -300,31 +446,23 @@ export default {
       if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
       return n + ' B';
     },
-    // 计数条宽度百分比：钳制到 [0,100]，并保证有值的最短可见条，避免除零/满值溢出
-    pct(c, m) {
-      var mx = (m && m > 0) ? m : 1;
-      var p = Math.round(c / mx * 100);
-      if (!isFinite(p) || p < 0) p = 0;
-      if (p > 100) p = 100;
-      if (p > 0 && p < 2) p = 2;
-      return p;
-    },
     // ---- 日期选择弹窗 ----
     openCal() {
       var now = new Date();
-      if (this.trendModeIdx == 0 || this.trendModeIdx == 5) {   // 按日 / 单日12×30：月历
+      if (this.trendModeIdx == 2) {
+        if (this.heatScope == 2) {   // 时段-月：年 + 12 月
+          var p = String(this.monthStr).split('-');
+          this.calY = parseInt(p[0]) || now.getFullYear();
+        } else {                     // 时段-日/周：月历选日
+          var target = this.heatScope == 1 ? this.weekStr : this.dateStr;
+          var p = String(target).split('-');
+          this.calY = parseInt(p[0]) || now.getFullYear();
+          this.calM = parseInt(p[1]) || (now.getMonth() + 1);
+        }
+      } else {                       // 统计表：月历选日
         var p = String(this.dateStr).split('-');
         this.calY = parseInt(p[0]) || now.getFullYear();
         this.calM = parseInt(p[1]) || (now.getMonth() + 1);
-      } else if (this.trendModeIdx == 4) {   // 本周时段：以周一所在月份打开月历
-        var p = String(this.weekStr).split('-');
-        this.calY = parseInt(p[0]) || now.getFullYear();
-        this.calM = parseInt(p[1]) || (now.getMonth() + 1);
-      } else if (this.trendModeIdx == 1) {
-        var p = String(this.monthStr).split('-');
-        this.calY = parseInt(p[0]) || now.getFullYear();
-      } else {
-        this.yearPage = Math.max(2020, (parseInt(this.yearNum) || now.getFullYear()) - 4);
       }
       this.calOpen = true;
     },
@@ -336,11 +474,10 @@ export default {
       this.calY = y;
       this.calM = m;
     },
-    shiftYears(n) { this.yearPage = Math.max(2020, this.yearPage + n); },
     pickDay(d) {
       if (d <= 0) return;
-      if (this.trendModeIdx == 4) {
-        this.weekStr = this.mondayYMD(this.calY, this.calM, d);   // 本周时段：选中日所在周
+      if (this.trendModeIdx == 2 && this.heatScope == 1) {
+        this.weekStr = this.mondayYMD(this.calY, this.calM, d);   // 时段-周：选中日所在周（周一）
       } else {
         this.dateStr = this.calY + '-' + this.pad2(this.calM) + '-' + this.pad2(d);
       }
@@ -351,9 +488,20 @@ export default {
       this.monthStr = this.calY + '-' + pad(m);
       this.closeCal();
     },
-    pickYear(y) {
-      this.yearNum = y;
-      this.closeCal();
+    // ---- 时段 scope 与步进 ----
+    setHeatScope(s) { this.heatScope = s; },
+    // 历史控制条右侧单按钮：统计=柱状/折线，时段=月/周/日 循环
+    toggleChartCycle() {
+      if (this.trendModeIdx == 0) {
+        this.setChartType(this.trendChartType == 'bar' ? 'line' : 'bar');
+      } else if (this.trendModeIdx == 2) {
+        this.setHeatScope(this.heatScope == 2 ? 1 : (this.heatScope == 1 ? 0 : 2));
+      }
+    },
+    heatStep(n) {   // n = ±1 步（日=±1 天，周=±1 周，月=±1 月）
+      if (this.heatScope == 2) this.stepMonth(n);
+      else if (this.heatScope == 1) this.stepDate(4, n * 7);
+      else this.stepDate(0, n);
     },
     onModalBgClick() { this.closeCal(); },
     onCardClick() { },
@@ -374,25 +522,23 @@ export default {
   .navtab:hover { background: var(--bg-3); }
   .navtab.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
   .spacer { flex-grow: 1; }
-  /* 右侧方形按钮：采集状态 + 主题切换（与导航标签风格一致） */
+  /* 右侧方形按钮：主题切换（与导航标签风格一致） */
   .circle-btn { width: 40px; padding: 6px 0; border-radius: 8px; font-size: 13px;
                 cursor: pointer; border: none; flex: none;
                 display: flex; align-items: center; justify-content: center;
                 background: var(--bg-3); color: var(--fg-2); }
+  /* 采集状态按钮：文案（采集中/已暂停）自适应宽度 */
+  .state-btn { min-width: 62px; padding: 6px 12px; border-radius: 8px; font-size: 13px;
+               font-weight: 600; cursor: pointer; border: none; flex: none;
+               display: flex; align-items: center; justify-content: center;
+               background: var(--bg-3); color: var(--fg-2); }
   .st-run { background: #1f9d55; color: #ffffff; }        /* 采集中：绿 */
   .st-paused { background: #d97706; color: #ffffff; }     /* 已暂停：橙 */
   .st-theme-light { background: #f59e0b; color: #ffffff; } /* 当前浅色：琥珀 */
   .st-theme-dark { background: #475569; color: #f1f5f9; } /* 当前深色：石板 */
 
-  /* 24h 应用占比进度条宽度（5% 步进） */
-  .bw-0{width:0%} .bw-5{width:5%} .bw-10{width:10%} .bw-15{width:15%} .bw-20{width:20%}
-  .bw-25{width:25%} .bw-30{width:30%} .bw-35{width:35%} .bw-40{width:40%} .bw-45{width:45%}
-  .bw-50{width:50%} .bw-55{width:55%} .bw-60{width:60%} .bw-65{width:65%} .bw-70{width:70%}
-  .bw-75{width:75%} .bw-80{width:80%} .bw-85{width:85%} .bw-90{width:90%} .bw-95{width:95%}
-  .bw-100{width:100%}
-
   .content { flex-grow: 1; width: 100%; height: 0; overflow: hidden; }
-  .view { width: 100%; height: 100%; padding: 20px; gap: 16px; flex-direction: column; overflow: hidden; }
+  .view { width: 100%; height: 100%; padding: 12px; gap: 12px; flex-direction: column; overflow: hidden; }
 
   /* 总览：7 项 KPI 分两行（4 + 3，末尾占位保持等宽） */
   .kpiwrap { flex-direction: column; gap: 10px; }
@@ -402,9 +548,6 @@ export default {
           flex-direction: row; align-items: center; justify-content: space-between; }
   .kpi2 .t { font-size: 12px; color: var(--fg-3); }
   .kpi2 .v { font-size: 17px; font-weight: 600; color: #4d9fff; }
-  .kpi-fill { flex-grow: 1; }
-  /* 今日活跃/空闲/专注摘要行 */
-  .kpi-mini { font-size: 12px; color: var(--fg-3); text-align: left; margin-top: 2px; }
 
   .section { background: var(--card-bg); border-radius: 10px; padding: 16px 18px;
              box-shadow: 0 1px 2px rgba(0,0,0,0.04); flex-direction: column; overflow: hidden;
@@ -414,54 +557,63 @@ export default {
   .flush { flex: 1 1 auto; min-height: 0; height: 0; }
 
   .kbd-table { width: 100%; flex-direction: column; gap: 2px; }
-  .kt-row { flex-direction: row; align-items: center; padding: 8px 10px;
+  .kt-row { flex-direction: row; align-items: center; padding: 6px 10px;
             border-radius: 6px; }
   .kt-row:hover { background: var(--bg-3); }
-  .kt-label { font-size: 13px; color: var(--fg); width: 140px; }
+  .kt-label { font-size: 13px; color: var(--fg-2); width: 128px; flex: none; white-space: nowrap; }
   /* 原生 progressbar：内部按 value/(max-min) 比例填充，:value 绑定真实反应式更新 */
   .kt-bar { flex-grow: 1; height: 8px; }
-  .kt-count { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); }
+  .kt-count { width: 68px; text-align: right; font-size: 13px; color: var(--fg); font-weight: 600; flex: none; }
+  /* 24h 应用行悬停高亮 + 点选固定 + 展开详情 */
+  .ap-row { border-radius: 6px; }
+  .ap-row:hover { background: var(--bg-2); }
+  .ap-row.on { background: var(--bg-2); }
+  .ap-detail { display: none; flex-direction: row; justify-content: flex-start; padding: 2px 6px 4px 6px; gap: 2px; }
+  .ap-row:hover .ap-detail { display: flex; }
 
   .mouse-grid { flex-direction: column; gap: 8px; }
-  .mouse-grid2 { flex-direction: row; gap: 20px; }
   .mouse-col { flex: 1; flex-direction: column; gap: 4px; }
-  .mouse-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 8px 10px;
+  .mouse-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 7px 10px;
                border-radius: 6px; }
   .mouse-row:hover { background: var(--bg-3); }
-  .mouse-row2 { flex-direction: row; align-items: center; justify-content: space-between; padding: 7px 10px;
+  .mouse-row2 { flex-direction: row; align-items: center; justify-content: space-between; padding: 6px 10px;
                 border-radius: 6px; }
   .mouse-row2:hover { background: var(--bg-3); }
-  .mouse-name { font-size: 13px; color: var(--fg); width: 140px; }
-  .mouse-name2 { font-size: 13px; color: var(--fg); }
+  .mouse-name { font-size: 13px; color: var(--fg-2); width: 56px; flex: none; }
+  .mouse-name2 { font-size: 13px; color: var(--fg-2); flex: none; }
   .mouse-bar { flex-grow: 1; height: 8px; }
-  .mouse-val { width: 90px; text-align: right; font-size: 13px; color: var(--fg-2); font-weight: 600; }
-  .mouse-val2 { text-align: right; font-size: 14px; color: #4d9fff; font-weight: 600; }
-  .mouse-h { font-size: 12px; color: var(--fg-3); margin-top: 6px; }
+  .mouse-val { width: 72px; text-align: right; font-size: 13px; color: var(--fg); font-weight: 600; flex: none; }
+  .mouse-val2 { text-align: right; font-size: 13px; color: var(--accent); font-weight: 600; }
 
   .canvas { flex-grow: 1; width: 100%; min-height: 0; }
   .scroll-fill { flex: 1 1 auto; width: 100%; min-height: 0; height: 0; overflow-y: auto; overflow-x: hidden; }
 
-  .modes { flex-direction: row; gap: 6px; }
+  .modes { flex-direction: row; gap: 6px; align-items: center; }
+  /* 主按钮（统计/时段/明细）用 .mode；控制条内次级控件用更紧凑的 .mode-s */
   .mode { padding: 5px 12px; border-radius: 7px; font-size: 12px; color: var(--fg-2);
           cursor: pointer; background: var(--bg-3); }
   .mode.on { background: var(--accent); color: var(--fg-on-accent); }
-  .ctrlbar { flex-direction: row; align-items: center; gap: 8px; margin-bottom: 10px; }
-  /* 应用筛选（v0.3.0）：弹窗选项按钮 + 入口按钮选中态 */
+  .mode-s { padding: 2px 16px; border-radius: 6px; font-size: 11px; color: var(--fg-2);
+            cursor: pointer; background: var(--bg-3); line-height: 1.2; }
+  .mode-s.on { background: var(--accent); color: var(--fg-on-accent); }
+  .ctrlbar { flex-direction: row; align-items: center; gap: 8px; width: 100%; }
+  /* 应用筛选：弹窗选项按钮 + 入口按钮选中态 */
   .filter-opt { width: 100%; padding: 8px 12px; border-radius: 6px; font-size: 12px;
                 cursor: pointer; background: transparent; color: var(--fg-2);
                 text-align: left; white-space: nowrap; overflow: hidden; flex: none; }
   .filter-opt:hover { background: var(--bg-3); }
   .filter-opt.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
   .calbtn.on { background: var(--accent); color: var(--fg-on-accent); }
-  /* 历史视图：多系列勾选行（T7） */
-  .seriesbar { flex-direction: row; align-items: center; gap: 6px; margin-bottom: 10px; }
-  .series-title { font-size: 12px; color: var(--fg-3); margin-right: 2px; flex: none; }
 
   .tinput { background: var(--input-bg); border: 1px solid var(--input-border);
             border-radius: 6px; padding: 5px 10px; font-size: 12px; color: var(--fg);
             width: 118px; }
   .calbtn { padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
             background: var(--bg-3); color: var(--fg-2); }
+  /* 日期显示按钮（统计表 / 时段的当前日期，点击打开日历；与 .calbtn 同风格） */
+  .datebtn { padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+             background: var(--bg-3); color: var(--fg-2); white-space: nowrap; }
+  .datebtn:hover { background: var(--bg-2); color: var(--fg); }
   /* 日期便携步进调整：文本框两侧 ‹ › */
   .datebox { flex-direction: row; align-items: center; gap: 4px; }
   .stepper { width: 24px; height: 26px; border-radius: 6px; font-size: 14px; cursor: pointer;
@@ -487,9 +639,11 @@ export default {
              color: var(--fg); background: var(--bg-3); border-radius: 6px; cursor: pointer; }
   .cal-day.blank { background: transparent; cursor: default; }
   .cal-day.sel { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+  .cal-day.dis { color: var(--fg-3); background: var(--bg-2); cursor: default; opacity: 0.55; }
   .cal-cell { width: 64px; height: 32px; text-align: center; font-size: 12px;
               color: var(--fg); background: var(--bg-3); border-radius: 6px; cursor: pointer; }
   .cal-cell.sel { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
+  .cal-cell.dis { color: var(--fg-3); background: var(--bg-2); cursor: default; opacity: 0.55; }
 
   /* 范围选择弹窗（导出 CSV/JSON、清除数据的日期范围） */
   .rng-modal { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -509,6 +663,9 @@ export default {
   .rng-date3 { flex-direction: row; align-items: center; gap: 4px; flex-grow: 1; }
   .rng-input.num { width: 128px; flex: none; text-align: center; padding: 4px 2px; }
   .rng-input.num.sm { width: 96px; }
+  /* 明细弹窗：5 框并排（年/月/日/时/分），收窄输入宽度；年框加宽 */
+  .rng-input.num.tn { width: 56px; }
+  .rng-input.num.tn.y { width: 80px; }
   .rng-unit { font-size: 11px; color: var(--fg-3); width: 14px; text-align: center; flex: none; }
   .rng-actions { flex-direction: row; align-items: center; gap: 8px; margin-top: 4px; }
   .rng-btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
@@ -521,31 +678,22 @@ export default {
   .ab-h2 { font-size: 13px; font-weight: 600; color: var(--fg); margin-bottom: 6px; margin-top: 12px; }
   .ab-line { font-size: 12px; color: var(--fg-2); margin-bottom: 3px; line-height: 1.5; }
   .ab-btns { flex-direction: row; gap: 10px; margin: 4px 0; }
-  /* 固定显式宽度：避免任何测量上下文缺失导致的"滚动后按钮变窄"，无论是否
-   * 重跑布局都保持稳定几何（开机自启按钮文本最长）。这里将宽度整体收窄。 */
   .ab-btn { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
           background: var(--accent); color: var(--fg-on-accent);
           flex: none; white-space: nowrap; width: 112px; }
   .ab-btn.ghost { background: var(--bg-3); color: var(--fg-2); }
   .ab-btn.danger { background: #b42318; color: #ffffff; }
-  /* 数据管理三按钮文本较短，单独收窄到 80px */
   .ab-btns.data .ab-btn { width: 80px; padding: 8px 8px; }
   /* 配列切换按钮（108/87/61） */
   .laybtn { padding: 8px 12px; border-radius: 8px; font-size: 13px; cursor: pointer;
             background: var(--bg-3); color: var(--fg-2);
             flex: none; white-space: nowrap; width: 68px; }
   .laybtn.on { background: var(--accent); color: var(--fg-on-accent); font-weight: 600; }
-  /* 关于页外部链接按钮（作者 / 项目 / 参考引用）。文字色取与总览数据一致的浅蓝，
-   * 在暗色下保持浅色可读（深蓝会看不清）。与上方设置按钮(.ab-btn)采用同一套
-   * “固定显式宽度”设计逻辑：宽度写死，避免滚动后/重新布局时测宽漂移导致按钮大小变化。 */
   .ab-link { padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
             background: var(--bg-3); color: #4d9fff;
             flex: none; white-space: nowrap; width: 118px; text-align: center; }
   .ab-link:hover { background: var(--accent); color: var(--fg-on-accent); }
   .ab-section { background: var(--bg-2); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
-  /* 里程碑徽章 */
-  .ms-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px;
-              background: var(--accent); color: var(--fg-on-accent); white-space: nowrap; }
 </style>
 
 <template>
@@ -555,9 +703,9 @@ export default {
               :class="activeView == t.id ? 'navtab on' : 'navtab'"
               @click="go(t.id)">{{ t.label }}</button>
       <div class="spacer"></div>
-      <button class="circle-btn" :class="paused ? 'st-paused' : 'st-run'" @click="togglePause"
-              :title="paused ? '已暂停' : '采集中'">
-        {{ paused ? '关' : '开' }}
+      <button class="state-btn" :class="paused ? 'st-paused' : 'st-run'" @click="togglePause"
+              :title="paused ? '点击恢复采集' : '点击暂停采集'">
+        {{ paused ? '已暂停' : '采集中' }}
       </button>
       <button class="circle-btn" :class="dark ? 'st-theme-dark' : 'st-theme-light'" @click="toggleTheme"
               :title="dark ? '切换浅色' : '切换深色'">
@@ -582,188 +730,156 @@ export default {
             <div class="kpi2"><label class="t">累计活跃</label><label class="v">{{ fmtMin(total.activeSec) }}</label></div>
           </div>
         </div>
-        <div class="section flush" style="flex-direction: row; gap: 10px; padding: 0; background: transparent; box-shadow: none; margin-top: -6px;">
-          <!-- 24h 应用活动占比（左侧，与上方 KPI 等宽） -->
-          <div v-if="optAppTrack && apps24h.length" class="section" style="flex:1; padding: 10px 12px; flex-direction: column;">
-            <label class="section-title">24h应用活动占比</label>
-            <ScrollView style="flex-grow: 1; height: 0; margin-top: 6px;">
-              <div v-for="(a, ai) in apps24h" :key="ai" style="flex-direction: row; align-items: center; gap: 6px; height: 28px; flex: none; padding: 2px 4px 2px 0;">
-                <label style="width: 34px; text-align: right; font-size: 12px; color: var(--fg-2); flex: none; white-space: nowrap; margin-left: -8px;">{{ a.p }}%</label>
-                <progressbar class="kt-bar" style="min-width: 40px;" min="0" max="100" :value="a.barW"></progressbar>
-                <label style="width: 96px; text-align: right; font-size: 11px; color: var(--fg); flex-shrink: 1; white-space: nowrap;">{{ a.n }}</label>
+        <div class="section flush" style="flex-direction: row; gap: 10px; padding: 0; background: transparent; box-shadow: none; margin-top: -2px;">
+          <!-- 24h 应用活动占比（左侧；与上方单个 KPI 列等宽） -->
+          <div v-if="optAppTrack && apps24h.length" class="section" style="flex:1; min-width: 0; padding: 10px 12px; flex-direction: column;">
+            <label class="section-title">24h应用活跃排行</label>
+            <ScrollView auto-hide-scrollbar="true" style="flex-grow: 1; height: 0; margin-top: 6px;"
+                        @mouseleave="setHoverApp('')">
+              <div v-for="(a, ai) in apps24h" :key="ai" class="ap-row"
+                   :class="pinnedApp == a.n ? 'on' : ''"
+                   style="flex-direction: column; flex: none; padding: 2px 6px;"
+                   @mouseenter="setHoverApp(a.n)" @click="togglePinApp(a.n)">
+                <!-- 行1：进程名（随窗口自适应，过长省略） -->
+                <label style="font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden;" :title="a.n">{{ a.n }}</label>
+                <!-- 行2：进度条 + 评分 -->
+                <div style="flex-direction: row; align-items: center; gap: 6px; height: 14px;">
+                  <progressbar class="kt-bar" style="flex-grow: 1; height: 6px;" min="0" max="100" :value="a.s"></progressbar>
+                  <label style="flex: none; font-size: 11px; color: var(--fg-2); width: 34px; text-align: right;">{{ a.s }}</label>
+                </div>
+                <!-- 行3：hover 展开详情（按键/点击/里程/活跃） -->
+                <div class="ap-detail">
+                  <label style="font-size: 10px; color: var(--fg-2); white-space: nowrap;">按 {{ fmt(a.k) }} · 点 {{ fmt(a.cl) }} · {{ fmtDist(a.m) }} · 活跃 {{ fmtMin(a.a * 60) }}</label>
+                </div>
               </div>
+              <div style="height: 20px; flex: none;"></div>
             </ScrollView>
           </div>
-          <!-- 24h 键鼠活动趋势（右侧） -->
-          <div class="section" style="flex:3.08; padding: 10px 12px; flex-direction: column;">
-            <div style="flex-direction: row; align-items: center; gap: 6px; margin-bottom: 2px;">
-              <label class="section-title" style="flex: none;">24h键鼠活动趋势</label>
+          <!-- 24h 键鼠活动趋势（右侧；flex:3 = 上方 3 列 KPI 宽度和） -->
+          <div class="section" style="flex:3; padding: 10px 12px; flex-direction: column;">
+            <div style="flex-direction: row; align-items: center; gap: 8px; margin-bottom: 2px;">
+              <label class="section-title" style="flex: none;">24h活动趋势</label>
               <div style="flex-grow: 1;"></div>
-              <!-- 多系列叠加（T7）：overviewSeries 勾选才在 APM 曲线上叠加对应折线，全不勾=仅 APM -->
-              <button class="mode" :class="overviewSeries[0] ? 'on' : ''" @click="toggleOverviewSeries(0)" style="padding: 2px 8px; font-size: 11px;">{{ overviewSeries[0] ? '☑' : '☐' }}按键</button>
-              <button class="mode" :class="overviewSeries[1] ? 'on' : ''" @click="toggleOverviewSeries(1)" style="padding: 2px 8px; font-size: 11px;">{{ overviewSeries[1] ? '☑' : '☐' }}点击</button>
-              <button class="mode" :class="overviewSeries[2] ? 'on' : ''" @click="toggleOverviewSeries(2)" style="padding: 2px 8px; font-size: 11px;">{{ overviewSeries[2] ? '☑' : '☐' }}里程</button>
-              <button class="mode" :class="overviewSeries[3] ? 'on' : ''" @click="toggleOverviewSeries(3)" style="padding: 2px 8px; font-size: 11px;">{{ overviewSeries[3] ? '☑' : '☐' }}活跃</button>
+              <button class="mode-s" :class="overviewSeries[0] ? 'on' : ''" @click="toggleOverviewSeries(0)">按键</button>
+              <button class="mode-s" :class="overviewSeries[1] ? 'on' : ''" @click="toggleOverviewSeries(1)">点击</button>
+              <button class="mode-s" :class="overviewSeries[2] ? 'on' : ''" @click="toggleOverviewSeries(2)">里程</button>
+              <button class="mode-s" :class="overviewSeries[3] ? 'on' : ''" @click="toggleOverviewSeries(3)">活跃</button>
             </div>
             <custom id="apm_canvas" class="canvas" style="margin-top: 2px;"></custom>
           </div>
         </div>
       </div>
 
-      <!-- 键盘：热力图 / 统计表 / 明细（视图内切换；原 键盘统计 + 键盘热力图 合并） -->
-      <div v-if="activeView == 'keys'" class="view">
-        <div class="modes" style="flex: none;">
-          <button :class="keySubView == 'heat' ? 'mode on' : 'mode'" @click="keySubView = 'heat'">热力图</button>
-          <button :class="keySubView == 'stats' ? 'mode on' : 'mode'" @click="keySubView = 'stats'">统计表</button>
-          <button :class="keySubView == 'detail' ? 'mode on' : 'mode'" @click="keySubView = 'detail'">明细</button>
+      <!-- 热力：键盘/鼠标 合并（heatDev 切换 + 配列三按钮 R10 迁移 + 应用筛选合一） -->
+      <div v-if="activeView == 'heat'" class="view" style="padding: 12px; gap: 12px;">
+        <div class="modes" style="flex: none; width: 100%;">
+          <button :class="heatDev == 0 ? 'mode on' : 'mode'" @click="heatDev = 0">键盘</button>
+          <button :class="heatDev == 1 ? 'mode on' : 'mode'" @click="heatDev = 1">鼠标</button>
           <div style="flex-grow: 1;"></div>
-          <button v-if="optAppTrack && filterOptions.length" class="mode" :class="filterApp ? 'on' : ''"
-                  @click="openFilterPick" style="max-width: 200px; white-space: nowrap; overflow: hidden;"
-                  :title="filterApp ? '应用筛选：' + filterApp : '应用筛选：全部应用'">应用：{{ filterApp || '全部' }}</button>
+          <!-- 配列按钮（仅键盘热力生效） -->
+          <button v-show="heatDev == 0" class="laybtn" :class="kbLayout == 0 ? 'on' : ''" @click="kbLayout = 0">108键</button>
+          <button v-show="heatDev == 0" class="laybtn" :class="kbLayout == 1 ? 'on' : ''" @click="kbLayout = 1">87键</button>
+          <button v-show="heatDev == 0" class="laybtn" :class="kbLayout == 2 ? 'on' : ''" @click="kbLayout = 2">61键</button>
+          <!-- 应用筛选按钮：始终贴最右 -->
+          <button class="mode" :class="filterApp ? 'on' : ''"
+                  @click="openFilterPick" style="max-width: 200px; white-space: nowrap; overflow: hidden; flex: none;"
+                  :title="filterApp ? '应用筛选：' + filterApp : '应用筛选：全部应用'">{{ filterApp || '全部应用' }}</button>
         </div>
-        <!-- 热力图（custom id 不变，onKeyHeatMount 挂载回调依旧生效） -->
-        <div class="section flush" v-if="keySubView == 'heat'">
+        <!-- 键盘热力图（custom id 不变，onKeyHeatMount 挂载回调依旧生效） -->
+        <div class="section flush" v-if="heatDev == 0">
           <custom id="keyheat_canvas" class="canvas"></custom>
         </div>
-        <!-- 统计表：累计按键条块（全部累计） -->
-        <div class="section flush" v-if="keySubView == 'stats'">
-          <ScrollView class="scroll-fill">
-            <div class="kbd-table">
-              <div v-for="(r, i) in keyTable" :key="i" class="kt-row">
-                <label class="kt-label">{{ r.l }}</label>
-                <progressbar class="kt-bar" min="0" max="100" :value="pct(r.c, keyMax)"></progressbar>
-                <label class="kt-count">{{ fmt(r.c) }}</label>
-              </div>
-            </div>
-          </ScrollView>
-        </div>
-        <!-- 明细：纯数字数值列 -->
-        <div class="section flush" v-if="keySubView == 'detail'">
-          <ScrollView class="scroll-fill">
-            <div class="kbd-table">
-              <div v-for="(r, i) in keyTable" :key="i" class="kt-row" style="padding: 5px 10px;">
-                <label class="kt-label" style="width: 200px;">{{ r.l }}</label>
-                <label class="kt-count" style="flex-grow: 1; width: auto; text-align: right;">{{ fmt(r.c) }}</label>
-              </div>
-            </div>
-          </ScrollView>
-        </div>
-      </div>
-
-      <!-- 鼠标：热力图 / 统计表 / 明细（视图内切换；原 鼠标统计 + 鼠标热力图 合并） -->
-      <div v-if="activeView == 'mouse'" class="view">
-        <div class="modes" style="flex: none;">
-          <button :class="mouseSubView == 'heat' ? 'mode on' : 'mode'" @click="mouseSubView = 'heat'">热力图</button>
-          <button :class="mouseSubView == 'stats' ? 'mode on' : 'mode'" @click="mouseSubView = 'stats'">统计表</button>
-          <button :class="mouseSubView == 'detail' ? 'mode on' : 'mode'" @click="mouseSubView = 'detail'">明细</button>
-          <div style="flex-grow: 1;"></div>
-          <button v-if="optAppTrack && filterOptions.length" class="mode" :class="filterApp ? 'on' : ''"
-                  @click="openFilterPick" style="max-width: 200px; white-space: nowrap; overflow: hidden;"
-                  :title="filterApp ? '应用筛选：' + filterApp : '应用筛选：全部应用'">应用：{{ filterApp || '全部' }}</button>
-        </div>
-        <!-- 热力图（custom id 不变，onMouseHeatMount 挂载回调依旧生效） -->
-        <div class="section flush" v-if="mouseSubView == 'heat'">
+        <!-- 鼠标热力图（custom id 不变，onMouseHeatMount 挂载回调依旧生效） -->
+        <div class="section flush" v-if="heatDev == 1">
           <custom id="mouseheat_canvas" class="canvas"></custom>
         </div>
-        <!-- 统计表：今日/全部 点击条块对比（移动为不同量纲，不参与条块） -->
-        <div class="section flush" v-if="mouseSubView == 'stats'">
-          <ScrollView class="scroll-fill">
-            <div class="mouse-grid2">
-              <div class="mouse-col">
-                <label class="mouse-h">今日</label>
-                <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.left, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.left) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.right, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.right) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.mid, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.mid) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouse.total, mouseTodayMax)"></progressbar><label class="mouse-val">{{ fmt(mouse.total) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(today.motion) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(today.distCm) }}</label></div>
-              </div>
-              <div class="mouse-col">
-                <label class="mouse-h">全部累计</label>
-                <div class="mouse-row"><label class="mouse-name">左键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.left, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.left) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">右键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.right, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.right) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">中键点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.mid, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.mid) }}</label></div>
-                <div class="mouse-row"><label class="mouse-name">总点击</label><progressbar class="mouse-bar" min="0" max="100" :value="pct(mouseAll.total, mouseMax)"></progressbar><label class="mouse-val">{{ fmt(mouseAll.total) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(mouseAll.motion) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(total.distCm) }}</label></div>
-              </div>
-            </div>
-          </ScrollView>
-        </div>
-        <!-- 明细：纯数字（今日 | 全部累计） -->
-        <div class="section flush" v-if="mouseSubView == 'detail'">
-          <ScrollView class="scroll-fill">
-            <div class="mouse-grid2">
-              <div class="mouse-col">
-                <label class="mouse-h">今日</label>
-                <div class="mouse-row2"><label class="mouse-name2">左键点击</label><label class="mouse-val2">{{ fmt(mouse.left) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">右键点击</label><label class="mouse-val2">{{ fmt(mouse.right) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">中键点击</label><label class="mouse-val2">{{ fmt(mouse.mid) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">总点击</label><label class="mouse-val2">{{ fmt(mouse.total) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(today.motion) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(today.distCm) }}</label></div>
-              </div>
-              <div class="mouse-col">
-                <label class="mouse-h">全部累计</label>
-                <div class="mouse-row2"><label class="mouse-name2">左键点击</label><label class="mouse-val2">{{ fmt(mouseAll.left) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">右键点击</label><label class="mouse-val2">{{ fmt(mouseAll.right) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">中键点击</label><label class="mouse-val2">{{ fmt(mouseAll.mid) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">总点击</label><label class="mouse-val2">{{ fmt(mouseAll.total) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动采样</label><label class="mouse-val2">{{ fmt(mouseAll.motion) }}</label></div>
-                <div class="mouse-row2"><label class="mouse-name2">移动里程</label><label class="mouse-val2">{{ fmtDist(total.distCm) }}</label></div>
-              </div>
-            </div>
-          </ScrollView>
-        </div>
       </div>
 
-      <!-- 历史趋势：本周时段热力(7×24h) + 日/月/年柱状图 -->
+      <!-- 历史：统计 / 时段 / 明细 三模式 -->
       <div v-if="activeView == 'trend'" class="view">
-        <div class="section flush">
-          <div class="ctrlbar">
-            <div class="modes">
-              <button id="mode_d" :class="trendModeIdx == 0 ? 'mode on' : 'mode'" @click="setMode(0)">日</button>
-              <button id="mode_m" :class="trendModeIdx == 1 ? 'mode on' : 'mode'" @click="setMode(1)">月</button>
-              <button id="mode_y" :class="trendModeIdx == 2 ? 'mode on' : 'mode'" @click="setMode(2)">年</button>
-              <button id="mode_h" :class="trendModeIdx == 4 ? 'mode on' : 'mode'" @click="setMode(4)">本周时段</button>
-              <button id="mode_t" :class="trendModeIdx == 5 ? 'mode on' : 'mode'" @click="setMode(5)">时段12×30</button>
-            </div>
-            <div class="spacer"></div>
-            <div class="datebox" v-if="trendModeIdx == 0 || trendModeIdx == 5">
-              <button class="stepper" @click="stepDate(0, -1)">‹</button>
-              <input id="date_input" type="date" class="tinput" v-model="dateStr"/>
-              <button class="stepper" @click="stepDate(0, 1)">›</button>
-            </div>
-            <div class="datebox" v-if="trendModeIdx == 4">
-              <button class="stepper" @click="stepDate(4, -7)">‹</button>
-              <input id="week_input" type="date" class="tinput" v-model="weekStr"/>
-              <button class="stepper" @click="stepDate(4, 7)">›</button>
-            </div>
-            <div class="datebox" v-if="trendModeIdx == 1">
-              <button class="stepper" @click="stepMonth(-1)">‹</button>
-              <input id="month_input" type="month" class="tinput" v-model="monthStr"/>
-              <button class="stepper" @click="stepMonth(1)">›</button>
-            </div>
-            <div class="datebox" v-if="trendModeIdx == 2">
-              <button class="stepper" @click="stepYear(-1)">‹</button>
-              <input id="year_input" type="number" class="tinput" v-model="yearNum"
-                     min="2020" max="9999"/>
-              <button class="stepper" @click="stepYear(1)">›</button>
-            </div>
-            <button id="calbtn" class="calbtn" @click="openCal">📅</button>
-            <button v-if="optAppTrack && filterOptions.length" class="calbtn" :class="filterApp ? 'on' : ''"
-                    @click="openFilterPick" style="max-width: 170px; white-space: nowrap; overflow: hidden;"
-                    :title="filterApp ? '按应用查看：' + filterApp : '按应用查看：全部应用'">应用：{{ filterApp || '全部' }}</button>
+        <div class="ctrlbar" style="flex: none;">
+          <!-- 左侧：模式 + 系列选择 -->
+          <div class="modes" style="flex-shrink: 1; min-width: 0;">
+            <button :class="trendModeIdx == 0 ? 'mode on' : 'mode'" @click="setMode(0)">统计</button>
+            <button :class="trendModeIdx == 2 ? 'mode on' : 'mode'" @click="setMode(2)">时段</button>
+            <button :class="trendModeIdx == 1 ? 'mode on' : 'mode'" @click="setMode(1)">明细</button>
           </div>
-          <!-- 多系列勾选（T7 前置）：C++ 读取 trendSeries 映射 g_trendChart.enabled；热力模式无系列概念，隐藏 -->
-          <div class="seriesbar" v-if="trendModeIdx == 0 || trendModeIdx == 1 || trendModeIdx == 2">
-            <label class="series-title">显示系列</label>
-            <button class="mode" :class="trendSeries[0] ? 'on' : ''" @click="toggleSeries(0)">{{ trendSeries[0] ? '☑' : '☐' }}按键</button>
-            <button class="mode" :class="trendSeries[1] ? 'on' : ''" @click="toggleSeries(1)">{{ trendSeries[1] ? '☑' : '☐' }}点击</button>
-            <button class="mode" :class="trendSeries[2] ? 'on' : ''" @click="toggleSeries(2)">{{ trendSeries[2] ? '☑' : '☐' }}里程</button>
-            <button class="mode" :class="trendSeries[3] ? 'on' : ''" @click="toggleSeries(3)">{{ trendSeries[3] ? '☑' : '☐' }}活跃</button>
+          <div v-show="trendModeIdx == 0" class="modes" style="flex: 1 1 auto; justify-content: center; min-width: 0;">
+            <button class="mode-s" :class="trendSeries[0] ? 'on' : ''" @click="toggleSeries(0)">按键</button>
+            <button class="mode-s" :class="trendSeries[1] ? 'on' : ''" @click="toggleSeries(1)">点击</button>
+            <button class="mode-s" :class="trendSeries[2] ? 'on' : ''" @click="toggleSeries(2)">里程</button>
+            <button class="mode-s" :class="trendSeries[3] ? 'on' : ''" @click="toggleSeries(3)">活跃</button>
           </div>
-          <custom id="trend_canvas" class="canvas"></custom>
+          <div v-show="trendModeIdx == 2" class="modes" style="flex: 1 1 auto; justify-content: center; min-width: 0;">
+            <button class="mode-s" :class="heatSeries == 0 ? 'on' : ''" @click="heatSeries = 0">按键</button>
+            <button class="mode-s" :class="heatSeries == 1 ? 'on' : ''" @click="heatSeries = 1">点击</button>
+            <button class="mode-s" :class="heatSeries == 2 ? 'on' : ''" @click="heatSeries = 2">里程</button>
+            <button class="mode-s" :class="heatSeries == 3 ? 'on' : ''" @click="heatSeries = 3">活跃</button>
+          </div>
+          <!-- 明细模式无系列按钮，用占位弹性撑开，把右侧时间/应用按钮推到最右 -->
+          <div v-show="trendModeIdx == 1" style="flex-grow: 1; flex-shrink: 1;"></div>
+
+          <!-- 右侧：状态切换 + 时间 + 应用（靠右对齐；v-show 避免挂载顺序错位） -->
+          <button v-show="trendModeIdx != 1" class="mode-s" @click="toggleChartCycle">{{ chartToggleLabel }}</button>
+          <div class="datebox" v-show="trendModeIdx == 0" style="flex-shrink: 1; min-width: 0;">
+            <button class="stepper" @click="stepDate(0, -1)">‹</button>
+            <button class="datebtn" @click="openCal">{{ dateStr }}</button>
+            <button class="stepper" @click="stepDate(0, 1)">›</button>
+          </div>
+          <div class="datebox" v-show="trendModeIdx == 2" style="flex-shrink: 1; min-width: 0;">
+            <button class="stepper" @click="heatStep(-1)">‹</button>
+            <button class="datebtn" @click="openCal">{{ heatScope == 1 ? weekStr : (heatScope == 2 ? monthStr : dateStr) }}</button>
+            <button class="stepper" @click="heatStep(1)">›</button>
+          </div>
+          <button v-show="trendModeIdx == 1" class="mode-s" @click="openDetailRange"
+                  style="max-width: 206px; white-space: nowrap; overflow: hidden; flex-shrink: 1; min-width: 0;"
+                  :title="detailRangeLabel">{{ detailRangeLabel }}</button>
+          <button class="calbtn" :class="filterApp ? 'on' : ''"
+                  @click="openFilterPick" style="max-width: 200px; white-space: nowrap; overflow: hidden; flex-shrink: 1; min-width: 0;"
+                  :title="filterApp ? '按应用查看：' + filterApp : '按应用查看：全部应用'">{{ filterApp || '全部应用' }}</button>
+        </div>
+
+        <div class="section flush" style="padding: 0; background: transparent; box-shadow: none;">
+          <div class="section" v-if="trendModeIdx != 1" style="flex: 1 1 auto; min-height: 0;">
+            <custom id="trend_canvas" class="canvas"></custom>
+          </div>
+
+          <!-- 明细视图：上方鼠标窗格，下方键盘窗格 -->
+          <div v-if="trendModeIdx == 1" style="flex: 1 1 auto; min-height: 0; flex-direction: column; gap: 10px;">
+            <!-- 上方窗格：鼠标详情（左/中/右键 + 里程/活跃/最长连续活跃） -->
+            <div class="section" style="flex: 0 0 auto; padding: 10px 12px; flex-direction: column;">
+              <div style="flex-direction: row; gap: 16px;">
+                <div class="mouse-col" style="flex: 1;">
+                  <div class="mouse-row"><label class="mouse-name">左键</label>
+                    <progressbar class="mouse-bar" min="0" max="100" :value="detail.leftW"></progressbar>
+                    <label class="mouse-val">{{ fmt(detail.left) }}</label></div>
+                  <div class="mouse-row"><label class="mouse-name">中键</label>
+                    <progressbar class="mouse-bar" min="0" max="100" :value="detail.midW"></progressbar>
+                    <label class="mouse-val">{{ fmt(detail.mid) }}</label></div>
+                  <div class="mouse-row"><label class="mouse-name">右键</label>
+                    <progressbar class="mouse-bar" min="0" max="100" :value="detail.rightW"></progressbar>
+                    <label class="mouse-val">{{ fmt(detail.right) }}</label></div>
+                </div>
+                <div class="mouse-col" style="flex: 1;">
+                  <div class="mouse-row2"><label class="mouse-name2">里程</label><label class="mouse-val2">{{ fmtDist(detail.distCm) }}</label></div>
+                  <div class="mouse-row2"><label class="mouse-name2">活跃</label><label class="mouse-val2">{{ fmtMin(detail.activeSec) }}</label></div>
+                  <div class="mouse-row2"><label class="mouse-name2">最长连续活跃</label><label class="mouse-val2">{{ fmtMin(detail.maxSessionSec) }}</label></div>
+                </div>
+              </div>
+            </div>
+            <!-- 下方窗格：键盘所有按键单列 -->
+            <div class="section" style="flex: 1 1 0; min-height: 0; padding: 10px 12px; flex-direction: column;">
+              <ScrollView class="scroll-fill" style="flex: 1 1 0; min-height: 0;">
+                <div class="kbd-table">
+                  <div v-for="(k, ki) in detail.kbd" :key="ki" class="kt-row">
+                    <label class="kt-label">{{ k.l }}</label>
+                    <progressbar class="kt-bar" min="0" max="100" :value="k.w"></progressbar>
+                    <label class="kt-count">{{ fmt(k.c) }}</label>
+                  </div>
+                </div>
+              </ScrollView>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -772,7 +888,11 @@ export default {
         <div class="section flush">
           <ScrollView class="scroll-fill">
             <div class="mouse-grid">
-              <label class="ab-h2" style="margin-top: 0;">存储</label>
+              <!-- 标题+版本+简介置顶（从页面中下部上移） -->
+              <label class="ab-title" style="margin-top: 0;">键鼠使用记录 v3.1.0</label>
+              <label class="ab-line" style="margin-bottom: 2px;">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
+
+              <label class="ab-h2">存储</label>
               <div class="ab-section">
                 <label class="ab-line" style="margin-top: 0;">当前存储：{{ fmtBytes(storage.bytes) }} · {{ storage.days }} 天（{{ storage.first || '—' }} ~ {{ storage.last || '—' }}）</label>
                 <div class="ab-btns data" style="margin-top: 6px;">
@@ -784,51 +904,29 @@ export default {
                 </div>
               </div>
 
-              <label class="ab-h2">系统选项</label>
+              <!-- 选项：自启 + 排除列表 -->
+              <label class="ab-h2">选项</label>
               <div class="ab-section">
                 <div class="ab-btns" style="margin-top: 0; align-items: center;">
                   <button class="ab-btn" :class="autostart ? '' : 'ghost'" @click="toggleAutostart()">
                     {{ autostart ? '开机自启：开' : '开机自启：关' }}
                   </button>
-                  <label class="ab-line" style="margin: 0;">键盘配列：</label>
-                  <button class="laybtn" :class="kbLayout == 0 ? 'on' : ''" @click="kbLayout = 0">108 键</button>
-                  <button class="laybtn" :class="kbLayout == 1 ? 'on' : ''" @click="kbLayout = 1">87 键</button>
-                  <button class="laybtn" :class="kbLayout == 2 ? 'on' : ''" @click="kbLayout = 2">61 键</button>
                 </div>
-              </div>
-
-              <label class="ab-h2">统计选项</label>
-              <div class="ab-section">
-                <div class="ab-btns" style="margin-top: 0; align-items: center;">
-                  <button class="ab-btn" style="width: 122px;" :class="optAppTrack ? '' : 'ghost'" @click="toggleOptApp">
-                    {{ optAppTrack ? '前台应用统计：开' : '前台应用统计：关' }}
-                  </button>
-                  <div v-if="optAppTrack" style="flex-direction: row; gap: 4px; flex-grow: 1;">
-                    <input type="text" class="tinput" style="flex-grow: 1; width: auto;" v-model="excludeStr" placeholder="exe名,逗号分隔"/>
-                    <button class="ab-btn" style="width: 72px;" @click="applyExcl">添加排除</button>
-                  </div>
+                <div style="flex-direction: row; gap: 4px; margin-top: 6px;">
+                  <input type="text" class="tinput" style="flex-grow: 1; width: auto;" v-model="excludeStr" placeholder="排除记录应用：填写进程名，可用&quot;,&quot;分割"/>
+                  <button class="ab-btn" style="width: 72px;" @click="applyExcl">添加排除</button>
                 </div>
-                <div v-if="optAppTrack && excludeList.length" style="flex-direction: column; gap: 2px; margin-top: 6px;">
-                  <div v-for="(e, ei) in excludeList" :key="ei" style="flex-direction: row; align-items: center; gap: 4px;">
-                    <label class="ab-line" style="margin: 0; flex-grow: 1;">{{ e }}</label>
-                    <button class="ab-btn ghost" style="width: 44px; padding: 3px 4px; font-size: 11px;" @click="removeExcl(ei)">移除</button>
-                  </div>
-                </div>
-                <!-- 应用排行（v0.3.0）：今日活跃应用列表，点击「下钻」一键按应用筛选 -->
-                <div v-if="optAppTrack && apps.length" style="flex-direction: column; gap: 2px; margin-top: 10px;">
-                  <label class="ab-h2" style="margin: 0;">今日活跃应用</label>
-                  <div v-for="(a, ai) in apps" :key="ai" style="flex-direction: row; align-items: center; gap: 6px;">
-                    <label style="flex-grow: 1; font-size: 12px; color: var(--fg); white-space: nowrap; overflow: hidden;">{{ a.n }}</label>
-                    <label style="font-size: 12px; color: var(--fg-2); width: 76px; text-align: right; flex: none;">{{ fmt(a.c) }} 次</label>
-                    <button class="ab-btn ghost" style="width: 52px; padding: 3px 4px; font-size: 11px;" @click="setFilterApp(a.n)">下钻</button>
+                <div v-if="excludeList.length" style="flex-direction: row; align-items: flex-start; gap: 12px; margin-top: 6px;">
+                  <div v-for="(col, ci) in excludeCols" :key="ci" style="flex-direction: column; gap: 2px; flex-grow: 1; min-width: 0;">
+                    <div v-for="(e, ei) in col" :key="ei" style="flex-direction: row; align-items: center; gap: 4px;">
+                      <label class="ab-line" style="margin: 0; flex-grow: 1;">{{ e }}</label>
+                      <button class="ab-btn ghost" style="width: 44px; padding: 3px 4px; font-size: 11px;" @click="removeExcl(exclRealIndex(ci, ei))">移除</button>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <!-- 关于（并入设置）：版本 / 隐私 / 开发信息 / 许可 / 主页链接 -->
-              <label class="ab-title">键鼠使用记录 v0.3.0</label>
-              <label class="ab-line">本地键盘 / 鼠标使用统计工具，统计按键、点击与移动次数。</label>
-
+              <!-- 隐私与安全 / 开发信息 / 许可 -->
               <label class="ab-h2" style="margin-top: 16px;">隐私与安全</label>
               <div class="ab-section">
                 <label class="ab-line" style="margin-top: 0;">· 所有数据仅保存在本机（%APPDATA%\KeyMouseTracker），不联网、不上传、无遥测。</label>
@@ -858,10 +956,10 @@ export default {
       </div>
     </div>
 
-    <!-- 日期选择弹窗（按日：月历；按月：年 + 12 月；按年：12 年分页） -->
+    <!-- 日期选择弹窗（统计表/时段-日/周：月历；时段-月：年 + 12 月） -->
     <div v-if="calOpen" class="modal" @click="onModalBgClick" @keydown="onModalKeydown">
       <div class="calcard" @click="onCardClick">
-        <div v-if="trendModeIdx == 0 || trendModeIdx == 4 || trendModeIdx == 5">
+        <div v-if="trendModeIdx == 0 || (trendModeIdx == 2 && heatScope != 2)">
           <div class="calhead">
             <button class="navarrow" @click="calShift(-12)">«</button>
             <button class="navarrow" @click="calShift(-1)">‹</button>
@@ -874,11 +972,12 @@ export default {
           </div>
           <div v-for="(wk, wi) in calWeeks" :key="wi" class="cal-row">
             <button v-for="(c, ci) in wk" :key="ci"
-                    :class="c.sel ? 'cal-day sel' : (c.d > 0 ? 'cal-day' : 'cal-day blank')"
+                    :class="c.sel ? 'cal-day sel' : (c.d > 0 ? (c.dis ? 'cal-day dis' : 'cal-day') : 'cal-day blank')"
+                    :enabled="!c.dis"
                     @click="pickDay(c.d)">{{ c.d > 0 ? c.d : '' }}</button>
           </div>
         </div>
-        <div v-if="trendModeIdx == 1">
+        <div v-if="trendModeIdx == 2 && heatScope == 2">
           <div class="calhead">
             <button class="navarrow" @click="calShift(-12)">«</button>
             <label class="caltitle">{{ calY }} 年</label>
@@ -886,48 +985,40 @@ export default {
           </div>
           <div v-for="(r, ri) in monthRows" :key="ri" class="cal-row">
             <button v-for="(mm, mi) in r" :key="mi"
-                    :class="mm.sel ? 'cal-cell sel' : 'cal-cell'"
+                    :class="mm.sel ? 'cal-cell sel' : (mm.dis ? 'cal-cell dis' : 'cal-cell')"
+                    :enabled="!mm.dis"
                     @click="pickMonth(mm.m)">{{ mm.m }}月</button>
-          </div>
-        </div>
-        <div v-if="trendModeIdx == 2">
-          <div class="calhead">
-            <button class="navarrow" @click="shiftYears(-12)">«</button>
-            <label class="caltitle">{{ yearPage }} – {{ yearPage + 11 }}</label>
-            <button class="navarrow" @click="shiftYears(12)">»</button>
-          </div>
-          <div v-for="(r, ri) in yearRows" :key="ri" class="cal-row">
-            <button v-for="(yy, yi) in r" :key="yi"
-                    :class="yy.sel ? 'cal-cell sel' : 'cal-cell'"
-                    @click="pickYear(yy.y)">{{ yy.y }}</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 范围选择弹窗（导出 CSV / JSON / 清除数据） -->
+    <!-- 范围选择弹窗（导出 CSV / JSON / 清除数据）：Q10 确认后带 4 快捷按钮 -->
     <div v-if="rangePickOpen" class="rng-modal">
       <div class="rng-card">
         <label class="rng-title">{{ rangeKind == 'clear' ? '清除日期范围' : '导出日期范围' }}</label>
-        <label class="rng-hint">{{ rangeKind == 'clear' ? '删除该范围内的全部统计记录（不可恢复）。' : '导出该范围内的数据；任一项为 0 表示该侧不限。' }}</label>
+        <label class="rng-hint">{{ rangeKind == 'clear' ? '删除该范围内的全部统计记录（不可恢复）。' : '导出该范围内的数据；选择起始/结束日期后点确定。' }}</label>
         <div class="rng-row">
           <label class="rng-label">起始</label>
           <div class="rng-date3">
-            <input type="number" class="rng-input num" v-model="rangeStartY" min="0" max="9999"/><label class="rng-unit">年</label>
-            <input type="number" class="rng-input num sm" v-model="rangeStartM" min="0" max="12"/><label class="rng-unit">月</label>
-            <input type="number" class="rng-input num sm" v-model="rangeStartD" min="0" max="31"/><label class="rng-unit">日</label>
+            <input type="number" class="rng-input num" v-model="rangeStartY" min="2000" max="2100"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num sm" v-model="rangeStartM" min="1" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num sm" v-model="rangeStartD" min="1" :max="daysInMonth(rangeStartY, rangeStartM)"/><label class="rng-unit">日</label>
           </div>
         </div>
         <div class="rng-row">
           <label class="rng-label">结束</label>
           <div class="rng-date3">
-            <input type="number" class="rng-input num" v-model="rangeEndY" min="0" max="9999"/><label class="rng-unit">年</label>
-            <input type="number" class="rng-input num sm" v-model="rangeEndM" min="0" max="12"/><label class="rng-unit">月</label>
-            <input type="number" class="rng-input num sm" v-model="rangeEndD" min="0" max="31"/><label class="rng-unit">日</label>
+            <input type="number" class="rng-input num" v-model="rangeEndY" min="2000" max="2100"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num sm" v-model="rangeEndM" min="1" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num sm" v-model="rangeEndD" min="1" :max="daysInMonth(rangeEndY, rangeEndM)"/><label class="rng-unit">日</label>
           </div>
         </div>
         <div class="rng-actions">
-          <button class="rng-btn" @click="rangeAll">全部历史</button>
+          <button class="rng-btn" @click="rangeToday">今日</button>
+          <button class="rng-btn" @click="rangeWeek">本周</button>
+          <button class="rng-btn" @click="rangeMonth">本月</button>
+          <button class="rng-btn" @click="rangeAll">全部</button>
           <div class="spacer"></div>
           <button class="rng-btn" @click="cancelRange">取消</button>
           <button class="rng-btn on" :class="rangeKind == 'clear' ? 'danger' : ''" @click="confirmRange">确定</button>
@@ -935,7 +1026,43 @@ export default {
       </div>
     </div>
 
-    <!-- 应用筛选弹窗（v0.3.0）：全部应用 + 可滚动的应用选项列表（点选即触发 C++ 筛选） -->
+    <!-- 明细时间范围弹窗（D13/D14）：年/月/日/时/分 5+5 框；4 快捷按钮 -->
+    <div v-if="detailRangeOpen" class="rng-modal">
+      <div class="rng-card" style="width: 500px;">
+        <label class="rng-title">明细时间范围</label>
+        <div class="rng-row">
+          <label class="rng-label">起始</label>
+          <div class="rng-date3">
+            <input type="number" class="rng-input num tn y" v-model="detailStartY" min="2000" max="2100"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num tn" v-model="detailStartM" min="1" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num tn" v-model="detailStartD" min="1" :max="daysInMonth(detailStartY, detailStartM)"/><label class="rng-unit">日</label>
+            <input type="number" class="rng-input num tn" v-model="detailStartH" min="0" max="23"/><label class="rng-unit">时</label>
+            <input type="number" class="rng-input num tn" v-model="detailStartN" min="0" max="59"/><label class="rng-unit">分</label>
+          </div>
+        </div>
+        <div class="rng-row">
+          <label class="rng-label">结束</label>
+          <div class="rng-date3">
+            <input type="number" class="rng-input num tn y" v-model="detailEndY" min="2000" max="2100"/><label class="rng-unit">年</label>
+            <input type="number" class="rng-input num tn" v-model="detailEndM" min="1" max="12"/><label class="rng-unit">月</label>
+            <input type="number" class="rng-input num tn" v-model="detailEndD" min="1" :max="daysInMonth(detailEndY, detailEndM)"/><label class="rng-unit">日</label>
+            <input type="number" class="rng-input num tn" v-model="detailEndH" min="0" max="23"/><label class="rng-unit">时</label>
+            <input type="number" class="rng-input num tn" v-model="detailEndN" min="0" max="59"/><label class="rng-unit">分</label>
+          </div>
+        </div>
+        <div class="rng-actions">
+          <button class="rng-btn" @click="rangeTodayDetail">今日</button>
+          <button class="rng-btn" @click="rangeWeekDetail">本周</button>
+          <button class="rng-btn" @click="rangeMonthDetail">本月</button>
+          <button class="rng-btn" @click="rangeAllDetail">全部</button>
+          <div class="spacer"></div>
+          <button class="rng-btn" @click="cancelDetailRange">取消</button>
+          <button class="rng-btn on" @click="confirmDetailRange">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 应用筛选弹窗：全部应用 + 可滚动的应用选项列表（点选即触发 C++ 筛选） -->
     <div v-if="filterPickOpen" class="modal" @click="closeFilterPick">
       <div class="calcard" style="width: 340px; height: 430px; flex-direction: column;" @click="onCardClick">
         <div class="calhead">

@@ -655,7 +655,7 @@ HRESULT Renderer::EndDraw() {
         TraceScope flushScope("core_renderer", "d2d_end_draw_duration");
         hr = ctx_->EndDraw();
     }
-    /* L177: skipPresent → 只 flush D2D 绘制 (上面 ctx_->EndDraw 已做), 不 flip 到
+    /* skipPresent → 只 flush D2D 绘制 (上面 ctx_->EndDraw 已做), 不 flip 到
      * DWM。给"绘制隐藏窗但不上屏"用 (避免 DWM 未合成窗的 Present 在 AMD 死锁)。 */
     if (swapChain_ && !skipPresent) {
         DXGI_PRESENT_PARAMETERS params = {};
@@ -2362,9 +2362,9 @@ void Renderer::PushRoundedClip(const D2D1_RECT_F& rect, float rx, float ry) {
     ComPtr<ID2D1Layer> layer;
     ctx_->CreateLayer(nullptr, layer.GetAddressOf());
     if (geom && layer) {
-        /* D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE — 必须 (build 96+ L25):
+        /* D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE — 必须 :
          * layer 默认 OPTIONS_NONE 会把 ClearType sub-pixel 渲染关掉, layer 内
-         * DrawText 在 CLEARTYPE 模式 (lib build 92+ 默认) 下文字几乎不可见.
+         * DrawText 在 CLEARTYPE 模式 (库默认) 下文字几乎不可见.
          * 典型表现: 浅色模式 ComboBox 弹出 popup 里的 item 文字白底白字看不见
          * (popup 先 PushRoundedClip 再画 text). INITIALIZE_FOR_CLEARTYPE 告诉
          * D2D layer backing 已经初始化为不透明色, sub-pixel blend 可以正确合成. */
@@ -2857,7 +2857,7 @@ static std::vector<PathInfo> ExtractPaths(const std::string& svg) {
     return paths;
 }
 
-// ===================== L75: SVG 文字 (<text> / <foreignObject>) =====================
+// ===================== SVG 文字 (<text> / <foreignObject>) =====================
 
 // UTF-8 → wstring (SVG/HTML 文字是 UTF-8).
 static std::wstring Utf8ToWide(const std::string& s) {
@@ -3031,7 +3031,7 @@ static std::vector<std::wstring> ResolveFontFamilyList(const std::string& css) {
     return out;
 }
 
-// L87: font-weight 解析. "bold"/"normal"/"bolder"/"lighter" + 数字 100..900.
+// font-weight 解析. "bold"/"normal"/"bolder"/"lighter" + 数字 100..900.
 static DWRITE_FONT_WEIGHT ParseFontWeight(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\n\r");
     if (a == std::string::npos) return DWRITE_FONT_WEIGHT_NORMAL;
@@ -3048,7 +3048,7 @@ static DWRITE_FONT_WEIGHT ParseFontWeight(const std::string& s) {
     return (DWRITE_FONT_WEIGHT)n;
 }
 
-// L87: 解析 SVG 所有 <linearGradient>/<radialGradient> → id→渐变. 含 href/xlink:href
+// 解析 SVG 所有 <linearGradient>/<radialGradient> → id→渐变. 含 href/xlink:href
 // stop + 几何属性继承 (resolve pass). vbW/vbH = viewBox 尺寸 (userSpaceOnUse 的 % 用).
 static std::map<std::string, SvgTextGradient>
 ParseGradients(const std::string& svg, float vbW, float vbH) {
@@ -3179,7 +3179,7 @@ ParseGradients(const std::string& svg, float vbW, float vbH) {
 }
 
 // 扫 <text> / <foreignObject>, 维护 <g> 继承栈 (transform + opacity + fill + font-*,
-// 同 ExtractPaths 但带文字属性级联), 产出文字 run. L87: 字重/渐变/继承/透明.
+// 同 ExtractPaths 但带文字属性级联), 产出文字 run. 字重/渐变/继承/透明.
 static std::vector<SvgTextRun> ExtractTextRuns(const std::string& svg) {
     std::vector<SvgTextRun> runs;
 
@@ -3510,7 +3510,7 @@ SvgIcon Renderer::ParseSvgIcon(const std::string& svgContent) {
         if (!h.empty()) icon.viewBoxH = (float)atof(h.c_str());
     }
 
-    // L75: 文字 run (<text> / <foreignObject>) —— 跟 path 独立提取, 即使没有
+    // 文字 run (<text> / <foreignObject>) —— 跟 path 独立提取, 即使没有
     // path 也要 (纯文字 / 只有 rect 的图表). 给 fallback 路径用; 原生 D2D 路径
     // 走 ParseSvgTextRuns 单独拿.
     icon.textRuns = svg_detail::ExtractTextRuns(svgContent);
@@ -3620,13 +3620,13 @@ void Renderer::DrawSvgIcon(const SvgIcon& icon, const D2D1_RECT_F& rect,
     ctx_->SetTransform(oldXform);
 }
 
-// L75: 只解析文字 run (D2D 原生 SVG 路径用 —— D2D 画形状, 这里补文字).
+// 只解析文字 run (D2D 原生 SVG 路径用 —— D2D 画形状, 这里补文字).
 std::vector<SvgTextRun> Renderer::ParseSvgTextRuns(const std::string& svgContent) {
     if (svgContent.empty()) return {};
     return svg_detail::ExtractTextRuns(svgContent);
 }
 
-// ===== L121: SVG <text> → <path> 字形轮廓内联 (修复文字 z 序) =====
+// ===== SVG <text> → <path> 字形轮廓内联 (修复文字 z 序) =====
 namespace {
 
 /* GetGlyphRunOutline 把字形轮廓写进这个 sink, 序列化成 SVG path-data 串.
@@ -4296,7 +4296,7 @@ std::string Renderer::SvgInlineTextAsPaths(const std::string& svg) {
         float fontSize = 0.0f;                                   // 0 = 未设
         std::vector<std::wstring> families; bool familySet = false;
         DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL; bool weightSet = false;
-        DWRITE_FONT_STYLE  fstyle = DWRITE_FONT_STYLE_NORMAL;  bool styleSet  = false;  // L122: italic
+        DWRITE_FONT_STYLE  fstyle = DWRITE_FONT_STYLE_NORMAL;  bool styleSet  = false;  // italic
         std::string fill; bool fillSet = false;                  // url()/#hex/named, "" = 未设
     };
     auto applyFont = [&](GFont& st, const std::string& tag, const std::string& style) {
@@ -4980,7 +4980,7 @@ std::string Renderer::SvgInlineTextAsPaths(const std::string& svg) {
             continue;
         }
 
-        /* L122: 含 <tspan> —— 每个 tspan 当"带定位的子 run"。逐 tspan 用自带
+        /* 含 <tspan> —— 每个 tspan 当"带定位的子 run"。逐 tspan 用自带
          * x/y(绝对) + dx/dy(相对) 定位, 字体/style/fill 自带优先否则继承 text 级;
          * 文本按 fill 分组累积成 <path>(保留首见顺序), 原地内联保 z 序。
          * text-anchor 在多 tspan 场景按 start 处理(matplotlib 用法)。
@@ -5124,8 +5124,8 @@ std::string Renderer::SvgInlineTextAsPaths(const std::string& svg) {
     return out;
 }
 
-// L75: DirectWrite 渲染 SVG 文字 run. baseXf = SVG user-space → 屏幕 (跟形状同一个).
-// L87: 按文字 bbox 建 SVG 渐变 brush. bx/by/bw/bh = 局部绘制空间的文字框,
+// DirectWrite 渲染 SVG 文字 run. baseXf = SVG user-space → 屏幕 (跟形状同一个).
+// 按文字 bbox 建 SVG 渐变 brush. bx/by/bw/bh = 局部绘制空间的文字框,
 // opacity 乘进每个 stop alpha. nullptr = 无 stop / 建失败 (调用方回退纯色).
 static ComPtr<ID2D1Brush> MakeSvgTextGradientBrush(
         ID2D1RenderTarget* rt, const SvgTextGradient& g,
@@ -5239,7 +5239,7 @@ void Renderer::DrawSvgTextRuns(const std::vector<SvgTextRun>& runs,
         }
         if (!brush) {
             D2D1_COLOR_F c = run.color;
-            c.a *= run.opacity;           // L87: 继承 opacity 乘进纯色 alpha
+            c.a *= run.opacity;           // 继承 opacity 乘进纯色 alpha
             brush = GetBrush(c);
         }
         if (brush) ctx_->DrawTextLayout(D2D1::Point2F(ox, oy), layout.Get(), brush.Get());

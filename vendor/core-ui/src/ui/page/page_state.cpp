@@ -470,7 +470,7 @@ void PageState::SetLocale(const std::string& locale) {
         // that called $t() (which reads $locale internally) re-evaluates.
         SetString("$locale", locale);
     }
-    // L83: combobox `<option>@key</option>` items are NOT $t bindings (the
+    // combobox `<option>@key</option>` items are NOT $t bindings (the
     // compiler bakes them into a static item list), so the $locale reactivity
     // above doesn't refresh them. Walk the tree and re-translate any combobox
     // carrying i18n keys. Run unconditionally so the compiler's @key
@@ -600,7 +600,7 @@ void PageState::ApplyBindingToWidget(Widget* w, const std::string& prop, const u
         bool& shouldInvalidate;
         ~InvalidateOnExit() {
             if (!shouldInvalidate) return;
-            /* build 285: 走合批版本。批量绑定 (v-for 建列表) 期间只记待办,
+            /*  走合批版本。批量绑定 (v-for 建列表) 期间只记待办,
              * 批结束统一各做一次 —— UpdateAnimTimers 单次是 O(整棵树), 每条
              * 绑定都调一次会让整体退化成 O(n^2)。非批量场景行为不变。 */
             ui::GetContext().RequestInvalidateAll();
@@ -628,7 +628,7 @@ void PageState::ApplyBindingToWidget(Widget* w, const std::string& prop, const u
         return;
     }
     if (prop == "id") {
-        /* :id="..." 动态 id (build 98+ L26). 主用例 v-for 给每个 iteration
+        /* :id="..." 动态 id . 主用例 v-for 给每个 iteration
          * 唯一 id 让 ui_page_on_widget_mount 能挂回调. 调用时机: bindings 首次
          * eval 时设 w->id, 紧接着 DispatchMountHooks 走 tree 命中 hook. id
          * 之后变化只更新值, 不联动 unmount/mount lifecycle — caller 别依赖. */
@@ -787,6 +787,40 @@ void PageState::ApplyBindingToWidget(Widget* w, const std::string& prop, const u
         }
         return;
     }
+    // HTML5 number input 的范围与步长：原本仅支持静态属性，这里补充动态 :min/:max/:step
+    // 绑定，用于时间选择器等跨字段钳制场景（例如改月份后联动更新日期的天数上限）。
+    // 注意：这里只处理 NumberBox；Slider 目前仅从静态属性读取范围，保持不动。
+    // 非数值控件（Label/Button 等）没有 min/max/step 语义，直接忽略以保留 CSS 属性空间。
+    if (prop == "min" || prop == "max" || prop == "step") {
+        if (auto* nb = dynamic_cast<NumberBoxWidget*>(w)) {
+            if (prop == "step") {
+                nb->SetStep(std::max(0.0f, static_cast<float>(v.ToNumber())));
+                return;
+            }
+            if (prop == "min") {
+                nb->SetRange(static_cast<float>(v.ToNumber()), nb->Max());
+                return;
+            }
+            nb->SetRange(nb->Min(), static_cast<float>(v.ToNumber()));
+            return;
+        }
+        // ProgressBarWidget 也支持动态 :max 绑定 —— 明细/统计类动态最大值
+        // (e.g. 按键排行 max = peak*1.33) 由 computed 求值后传入。原实现仅对
+        // NumberBox 生效，导致 progressbar 的 :max 走 fallback 被忽略，值被 clamp
+        // 到 static max=100 的默认构造值，所有高频键都堆到 100% 无对比。
+        if (auto* pb = dynamic_cast<ProgressBarWidget*>(w)) {
+            if (prop == "max") {
+                pb->SetMax(static_cast<float>(v.ToNumber()));
+                ui::RequestLayout();
+                return;
+            }
+            if (prop == "min") {
+                pb->SetMin(static_cast<float>(v.ToNumber()));
+                return;
+            }
+        }
+        return;
+    }
     if (prop == "value") {
         const bool painted = w->PaintedOnce();
         if (auto* ti = dynamic_cast<TextInputWidget*>(w)) {
@@ -848,7 +882,7 @@ void PageState::ApplyBindingToWidget(Widget* w, const std::string& prop, const u
 // ---- Menus -----------------------------------------------------------------
 
 void PageState::WireMenus() {
-    /* Build 73 (L17): 顶层菜单同走 WireSubtreeMenus 路径 — 反应式 hook +
+    /* Build 73: 顶层菜单同走 WireSubtreeMenus 路径 — 反应式 hook +
      * 完整 icon (SVG / bitmap) 支持都集中在那里, WireMenus 不再单独建静态
      * items. 老 demo 用静态 <menuitem text="..." icon="..."> 也 OK,
      * WireSubtreeMenus 内部 PopulateMenuItem 对 bound 字段为空时走静态
@@ -865,7 +899,7 @@ void PageState::WireMenus() {
 void PageState::WireSubtreeMenus(const std::vector<CompiledMenu>& subMenus,
                                   std::vector<std::shared_ptr<ContextMenu>>& outMenus) {
     if (subMenus.empty()) return;
-    /* Build 73 (L17): toWide / item 构造细节都搬到 PopulateMenuItem
+    /* Build 73: toWide / item 构造细节都搬到 PopulateMenuItem
      * 里, WireSubtreeMenus 只负责 shells + trigger + hook 注册. */
     auto resolveTrigger = [this](const std::string& sel) -> Widget* {
         if (sel.size() < 2 || sel[0] != '#') return nullptr;
@@ -879,7 +913,7 @@ void PageState::WireSubtreeMenus(const std::vector<CompiledMenu>& subMenus,
         if (w) winImpl = w;
     }
 
-    /* Build 73 (L17): 反应式菜单 — 先建 ContextMenu shells (不 populate items),
+    /* Build 73: 反应式菜单 — 先建 ContextMenu shells (不 populate items),
      * 注册 beforeShowHook -> PopulateMenu. 每次 Show 入口走 hook, Clear + 重
      * eval bound exprs + 重 add items. submenus 也建 shell, 递归注册 hook.
      * compiledToMenu_ 映射 PopulateMenuItem 找 submenu ContextMenu* 用. */
@@ -942,7 +976,7 @@ void PageState::WireSubtreeMenus(const std::vector<CompiledMenu>& subMenus,
             for (const auto& t : triggers_) if (t.rclick) rclickList.push_back(t);
             auto* wp = winImpl;
             auto prev = wp->onRightClick;
-            /* Build 107 (L28): rclick dispatch first-match → deepest-match.
+            /* Build 107: rclick dispatch first-match → deepest-match.
              * 之前按 rclickList 声明顺序 (.uix `<menu>` 出现顺序) 取第一个
              * Contains(x, y) 的 trigger, 但 child widget 上 rclick 也满足
              * ancestor trigger 的 Contains, 父先声明的话子 widget 自己的
@@ -956,7 +990,7 @@ void PageState::WireSubtreeMenus(const std::vector<CompiledMenu>& subMenus,
                 for (const auto& t : rclickList) {
                     if (!t.triggerElement || !t.menu) continue;
                     if (!t.triggerElement->Contains(x, y)) continue;
-                    /* L90: 跳过不可见 trigger (自身或祖先 visible=false) — 隐藏
+                    /* 跳过不可见 trigger (自身或祖先 visible=false) — 隐藏
                      * widget (如 borderless 隐藏的 minimap) rect 仍 Contains,
                      * 不跳会抢右键菜单, 小窗时盖住大半画布. */
                     {
@@ -986,7 +1020,7 @@ void PageState::WireSubtreeMenus(const std::vector<CompiledMenu>& subMenus,
 }
 
 // ============================================================================
-// Build 73 (L17): Reactive menu rebuild on Show
+// Build 73: Reactive menu rebuild on Show
 // ============================================================================
 
 JSValue PageState::EvalBoundExpr(
@@ -1123,7 +1157,7 @@ void PageState::PopulateMenu(
                         scan(*mi.submenu, maxW, hasSub, maxC);
                     }
                 }
-                /* 真实 measurement, build 83 (正确 CSS spec): build wrapper widget tree,
+                /* 真实 measurement,  (正确 CSS spec): build wrapper widget tree,
                  * SizeHint() 走 fixedW (CSS `width: NNN`) 或 children sum (fit-content
                  * fallback). max-width 是严格上界 (cap), min-width 是严格下界. 跟
                  * 浏览器 inline-block / block-with-explicit-width 行为一致.
@@ -1133,7 +1167,7 @@ void PageState::PopulateMenu(
                  *   .menuitem-row { max-width: NNN } → 上界, content < NNN 时菜单较窄
                  *   两者都设 → width 赢 (CSS 一致)
                  *
-                 * build 82 的 "if maxW > 0 use maxW" 是折中, 现在撤回. */
+                 * 旧版 "if maxW > 0 use maxW" 折中已撤回. */
                 if (mi.contentRoot && page_.ownedStylesheet) {
                     auto sub = ui::page::CompileIterationTemplate(
                         *mi.contentRoot, *page_.ownedStylesheet, page_.cssVars);
@@ -1191,7 +1225,7 @@ void PageState::PopulateMenu(
     /* Build 85+: 跨菜单树传播 — 算完 parent 的最终 MenuWidth, 回写到所有
      * submenu 当 minPropagatedWidth, 让 submenu 至少跟 parent 同宽. 整族
      * 菜单视觉一致 (不再 submenu 缩到自身文字宽度).
-     * build 249: share-width=false 让调用方关闭这条传播, 使子菜单按自身
+     * share-width=false 让调用方关闭这条传播, 使子菜单按自身
      * 内容列宽度收缩。 */
     float parentWidth = cm.shareWidthWithSubmenus ? menu->MenuWidth() : 0.0f;
     std::function<void(const CompiledMenu&)> propagate;
@@ -1231,7 +1265,7 @@ void PageState::PopulateMenuItem(
         ? EvalString(mi.boundShortcutExpr, locals) : mi.shortcut;
     std::wstring shortcut = scStr.empty() ? L"" : toWide(scStr);
 
-    /* BREAKING (build 75): customContent widget tree — 通过 CompileIterationTemplate
+    /* BREAKING : customContent widget tree — 通过 CompileIterationTemplate
      * 把 mi.contentRoot AST (一个 <div class="menuitem-row"> 包了用户写的 svg /
      * label / 任意 widget) 实例化成一棵新 widget tree, 装到 MenuItem.customContent.
      * 反应式 binding (e.g. <svg :style="...">) 通过同款 watchEffect 接到 jsState_,
@@ -1335,7 +1369,7 @@ void PageState::AttachWindow(uint64_t winHandle) {
         std::vector<TriggerSpec> rclickList;
         for (const auto& t : triggers_) if (t.rclick) rclickList.push_back(t);
         auto* wp = winImpl;
-        /* Build 107 (L28): deepest-match — 跟 WireSubtreeMenus 中 line 628 同款.
+        /* Build 107: deepest-match — 跟 WireSubtreeMenus 中 line 628 同款.
          * AttachWindow 后于 WireSubtreeMenus 调用, 这里的 lambda 才是最终生效
          * 的那个. 之前 WireSubtreeMenus 改成 deepest-match 但 AttachWindow
          * 没改, 用户右键子 widget 时仍走 first-match 命中父 trigger. 两处
@@ -1346,7 +1380,7 @@ void PageState::AttachWindow(uint64_t winHandle) {
             for (const auto& t : rclickList) {
                 if (!t.triggerElement || !t.menu) continue;
                 if (!t.triggerElement->Contains(x, y)) continue;
-                /* L90: 跳过不可见 trigger (自身或祖先 visible=false) — 隐藏
+                /* 跳过不可见 trigger (自身或祖先 visible=false) — 隐藏
                  * widget (如 borderless 隐藏的 minimap) rect 仍 Contains,
                  * 不跳会抢右键菜单, 小窗时盖住大半画布. */
                 {
@@ -1540,7 +1574,7 @@ struct CondInIter {
     const ui::uix::Node*  templateNode = nullptr;
     JSValue               fn           = JS_UNDEFINED;  // loop closure: fn(item[, idx]) → bool
     uint64_t              effectId     = 0;
-    // build 287: 条件求值体本身。keyed diff 复用一行时, iteration 的 itemValue
+    // 条件求值体本身。keyed diff 复用一行时, iteration 的 itemValue
     // 换成了新数组里的新对象, 旧 effect 的依赖集还挂在被丢弃的旧对象上, 于是
     // v-for 里的 v-if 再也不会重新求值 (表现: 行内容能更新, 但该出现/消失的
     // 分支纹丝不动)。存下求值体, 复用时 Dispose + 重新 WatchEffect 即可让依赖
@@ -1549,10 +1583,10 @@ struct CondInIter {
     WidgetPtr             mounted;
     std::vector<JSValue>  innerFns;
     std::vector<uint64_t> innerEffects;
-    /* build 289: 与 innerEffects 一一对应的求值体。理由跟上面的 evalFn 完全
+    /*  与 innerEffects 一一对应的求值体。理由跟上面的 evalFn 完全
      * 一样, 只是管的是 v-if **子树内部**的 binding: keyed diff 复用一行时,
      * 这些 effect 的依赖集同样还挂在被丢弃的旧 item 对象上, 于是子树里的
-     * {{ item.xxx }} 再也不更新。build 287 只修了条件本身, 漏了这一半 ——
+     * {{ item.xxx }} 再也不更新。早期修复只改了条件本身，漏了这一半 ——
      * 表现是"该出现的分支出现了, 但里面的数字/文字是旧的"。 */
     std::vector<std::function<void()>> innerEvalFns;
     // v-if nested inside this v-if (still in the outer v-for's loop scope).
@@ -1596,7 +1630,7 @@ struct PageState::JsLoopRuntime {
     // v-for iteration, listFn / keyFn / per-iter binding closures are
     // compiled with the OUTER iteration's loopVar / indexVar prepended as
     // params. At call time we build the args array as
-    //   [outerItem (, outerIdx), thisItem (, thisIdx), $event?]
+    // [outerItem (, outerIdx), thisItem (, thisIdx), $event?]
     // matching the param order used at compile time.
     JsLoopIteration*         outerIter = nullptr;
     std::vector<std::string> outerParamNames;   // ordered, matches compile params
@@ -2218,7 +2252,7 @@ void PageState::RewireIterationBindings(JsLoopRuntime& rt, JsLoopIteration& iter
             });
     }
 
-    // build 287: v-if 也得跟着重接。bindings 走的是 ApplyBindingToWidget, 属性
+    // v-if 也得跟着重接。bindings 走的是 ApplyBindingToWidget, 属性
     // 变了就能看出来; v-if 决定的是 widget 在不在, 依赖集失效的后果是整个分支
     // 卡死在复用前的形态。先重接本层再递归 inner —— 本层 effect 立刻重跑, 若
     // 判 false 会 unmount 并连带销毁 innerConditionals, 那时递归自然跳过。
@@ -2229,7 +2263,7 @@ void PageState::RewireIterationBindings(JsLoopRuntime& rt, JsLoopIteration& iter
                 if (cr->effectId) jsRt_->DisposeEffect(cr->effectId);
                 cr->effectId = jsRt_->WatchEffect(cr->evalFn);
 
-                /* build 289: 子树**内部**的 binding 也要重接。只修条件不修内部,
+                /*  子树**内部**的 binding 也要重接。只修条件不修内部,
                  * 表现是"该出现的分支出现了, 但里面的数字/文字还是旧的"。
                  * 注意顺序: 上面的 effect 刚跑过, 若判 false 会 unmount 并把
                  * innerEffects/innerEvalFns 清空, 这里自然就没得重接了。 */
@@ -2244,7 +2278,7 @@ void PageState::RewireIterationBindings(JsLoopRuntime& rt, JsLoopIteration& iter
         };
     rewireConds(iter.conditionals);
 
-    // build 290: v-for > v-for — the inner loop's watcher dep set was built
+    // v-for > v-for — the inner loop's watcher dep set was built
     // against the OLD item object (e.g. the previous week); after keyed
     // reuse it would never fire again. Dispose + re-WatchEffect so the dep
     // set rebuilds on the new object. RebuildJsLoop reads
@@ -2353,7 +2387,7 @@ void PageState::RebuildJsLoop(JsLoopRuntime& rt) {
     // wrong slot; reused ones sit wherever they were — so the whole block gets
     // lifted out and put back contiguously at insertIndex.
     //
-    // build 285: 这里原本是 "n 次 RemoveChild + n 次 InsertChild"。两者各自
+    // 这里原本是 "n 次 RemoveChild + n 次 InsertChild"。两者各自
     // 都是 O(n) —— RemoveChild 用 remove_if 扫全表, InsertChild 是 vector
     // 中间插入的 memmove —— 合起来 O(n^2)。2000 行实测 6.6 秒, 5000 行 41 秒。
     // 换成 "一趟批量摘除 + 一次整块插入", 两次 O(n)。
@@ -2416,6 +2450,16 @@ void PageState::WireLoopScopeEventEx(Widget* target, const std::string& evName,
         JS_FreeValue(ctx, arg);
     };
 
+    // 鼠标事件对象：与 WireQuickJSEvent 的 mouseEventValue 对齐（x/y/button/delta）
+    auto mouseEv = [ctx](const ui::MouseEvent& e) -> JSValue {
+        JSValue obj = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, obj, "x",      JS_NewFloat64(ctx, e.x));
+        JS_SetPropertyStr(ctx, obj, "y",      JS_NewFloat64(ctx, e.y));
+        JS_SetPropertyStr(ctx, obj, "delta",  JS_NewFloat64(ctx, e.delta));
+        JS_SetPropertyStr(ctx, obj, "button", JS_NewInt32(ctx, e.button));
+        return obj;
+    };
+
     if (evName == "click") {
         target->onClick = [callHandler]() { callHandler(JS_UNDEFINED); };
     } else if (evName == "change" || evName == "input") {
@@ -2430,16 +2474,34 @@ void PageState::WireLoopScopeEventEx(Widget* target, const std::string& evName,
             callHandler(JS_NewFloat64(ctx, static_cast<double>(v)));
         };
     } else if (evName == "dblclick") {
-        target->onMouseDblClickHook = [callHandler, ctx](const ui::MouseEvent& e) {
-            JSValue obj = JS_NewObject(ctx);
-            JS_SetPropertyStr(ctx, obj, "x",      JS_NewFloat64(ctx, e.x));
-            JS_SetPropertyStr(ctx, obj, "y",      JS_NewFloat64(ctx, e.y));
-            JS_SetPropertyStr(ctx, obj, "delta",  JS_NewFloat64(ctx, e.delta));
-            JS_SetPropertyStr(ctx, obj, "button", JS_NewInt32(ctx, e.leftBtn ? 0 : -1));
-            callHandler(obj);
+        target->onMouseDblClickHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
         };
+    } else if (evName == "mousedown") {
+        target->onMouseDownHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
+        };
+    } else if (evName == "mousemove") {
+        target->onMouseMoveHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
+        };
+    } else if (evName == "mouseup") {
+        target->onMouseUpHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
+        };
+    } else if (evName == "wheel") {
+        target->onMouseWheelHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
+        };
+    } else if (evName == "mouseenter") {
+        target->onMouseEnterHook = [callHandler, mouseEv](const ui::MouseEvent& e) {
+            callHandler(mouseEv(e));
+        };
+    } else if (evName == "mouseleave") {
+        // Leave 无坐标（见 onMouseLeaveHook 语义）
+        target->onMouseLeaveHook = [callHandler]() { callHandler(JS_UNDEFINED); };
     }
-    // Other events (mousedown / mouseup / wheel / focus / blur) — add as needed.
+    // Other events (focus / blur / contextmenu / drag*) — add as needed.
 }
 
 std::unique_ptr<CondInIter> PageState::BuildCondInIter(
@@ -2502,7 +2564,7 @@ std::unique_ptr<CondInIter> PageState::BuildCondInIter(
                     crRaw->innerFns.push_back(bfn);
                     Widget* tg = b.target;
                     std::string pp = b.property;
-                    /* 求值体存一份 (build 289) —— 复用行时要拿它重接依赖。 */
+                    /* 求值体存一份  —— 复用行时要拿它重接依赖。 */
                     std::function<void()> evalOne =
                         [this, ctx, bfn, tg, pp, iterRaw, hasIdx]() {
                             JSValue args2[2];

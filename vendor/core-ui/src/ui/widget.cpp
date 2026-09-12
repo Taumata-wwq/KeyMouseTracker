@@ -401,7 +401,7 @@ void Widget::DoLayout() {
         if (child->positionAbsolute) {
             if (child->layoutPinned &&
                 child->rect.right - child->rect.left > 0) {
-                child->DoLayout();   /* build 161: 钉住 — rect 不改写 */
+                child->DoLayout();   /* 钉住 — rect 不改写 */
                 continue;
             }
             auto hint = child->SizeHint();
@@ -431,7 +431,7 @@ void Widget::DoLayout() {
 // Recursively shift a widget's rect and all descendants' rects by (dx, dy).
 // Used to apply CSS transform: translate(x, y) before drawing, then undone
 // after; ScrollViewWidget also uses it to move content on pure scroll without
-// re-running layout (build 285).
+// re-running layout .
 void ShiftSubtreeRects(Widget* w, float dx, float dy) {
     if (!w) return;
     w->rect.left += dx; w->rect.right += dx;
@@ -461,7 +461,7 @@ static float OutsetPaintExtent(const Widget& w) {
 void Widget::DrawTree(Renderer& r) {
     if (!visible || opacity <= 0.0f) return;
 
-    /* 视口剔除 (build 285, opt-in — 只在祖先 PushCull 过时生效)。
+    /* 视口剔除 (opt-in — 只在祖先 PushCull 过时生效)。
      * 带 transform 的 widget 不参与: translate 会在下面 ShiftSubtreeRects 里
      * 改写整棵子树的 rect, rotate/scale 更会让实际覆盖范围超出 rect, 此时
      * 拿未变换的 rect 判定会误剪。列表行不带 transform, 不影响收益。 */
@@ -744,7 +744,7 @@ void VBoxWidget::DoLayout() {
     for (auto* child : absChildren) {
         if (child->layoutPinned &&
             child->rect.right - child->rect.left > 0) {
-            child->DoLayout();   /* build 161: 钉住 — rect 不改写 */
+            child->DoLayout();   /* 钉住 — rect 不改写 */
             continue;
         }
         auto hint = child->SizeHint();
@@ -953,7 +953,7 @@ void HBoxWidget::DoLayout() {
     for (auto* child : absChildren) {
         if (child->layoutPinned &&
             child->rect.right - child->rect.left > 0) {
-            child->DoLayout();   /* build 161: 钉住 — rect 不改写 */
+            child->DoLayout();   /* 钉住 — rect 不改写 */
             continue;
         }
         auto hint = child->SizeHint();
@@ -1117,7 +1117,7 @@ void HBoxWidget::DoLayoutWrap() {
     for (auto* child : absChildren) {
         if (child->layoutPinned &&
             child->rect.right - child->rect.left > 0) {
-            child->DoLayout();   /* build 161: 钉住 — rect 不改写 */
+            child->DoLayout();   /* 钉住 — rect 不改写 */
             continue;
         }
         auto hint = child->SizeHint();

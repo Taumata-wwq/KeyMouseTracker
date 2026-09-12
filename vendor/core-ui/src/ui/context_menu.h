@@ -15,7 +15,7 @@ namespace ui {
 class ContextMenu;
 using ContextMenuPtr = std::shared_ptr<ContextMenu>;
 
-/* BREAKING (build 75 / L17 follow-up): MenuItem 重设计成 widget slot.
+/* BREAKING : MenuItem 重设计成 widget slot.
  * 老的 text / icon / hasIcon / bitmap / hasColor / overrideColor / SvgIcon
  * 字段全删, 由 customContent (一棵完整 widget tree) 接管渲染. shortcut /
  * submenu / id / enabled / isSeparator 这些 menu 语义相关的留下. */
@@ -54,7 +54,7 @@ public:
     // 由 ui_debug_set_menu_autoclose(0) 打开。
     static bool g_debugSuppressAutoClose;
 
-    /* BREAKING (build 75): 老的 AddItem / AddItemEx / AddItemBitmap /
+    /* BREAKING : 老的 AddItem / AddItemEx / AddItemBitmap /
      * SetLastItemColor 全删. 唯一的 build 入口是 AddItemContent —
      * 调用方负责给一棵 widget tree, lib 负责 layout + render + hit-test.
      * shortcut 仍是 menu 框架渲染 (右对齐, 不跟 content widget tree 同色). */
@@ -70,7 +70,7 @@ public:
     void SetBgColor(D2D1_COLOR_F color) { bgColor_ = color; hasBgColor_ = true; }
     void SetFrostedMaterial(bool enabled) { frostedMaterial_ = enabled; ReleaseBackdropResource(); }
     void SetBackdropBlur(float radius) { backdropBlurRadius_ = radius; ReleaseBackdropResource(); }
-    /* Build 69+ (L19): 设单个菜单的圆角半径. <0 表示恢复 kCornerRadius 默认.
+    /* Build 69+: 设单个菜单的圆角半径. <0 表示恢复 kCornerRadius 默认.
      * 影响 shadow + card bg 的 FillRoundedRect, hover item highlight (6px)
      * 不动 (那是 item 级视觉不属于容器圆角). */
     void SetCornerRadius(float r) { cornerRadius_ = r; }
@@ -85,7 +85,7 @@ public:
     void Close();
     bool IsVisible() const { return visible_; }
 
-    // Build 73 (L17): 反应式菜单支持. PageState::WireSubtreeMenus 给走
+    // Build 73: 反应式菜单支持. PageState::WireSubtreeMenus 给走
     // 声明式 <menu> 路径的菜单挂这个 hook —— 每次 Show/ShowPopup 入口
     // 先调它 (它内部 Clear() 再 Populate*), 把 items 按当前 JS state 重建.
     // 老的 imperative ui_menu_add_item / SetLastItemColor 用法不设此 hook,
@@ -113,7 +113,7 @@ public:
      * submenu) 计算出的最大 MenuWidth 回写到每个 ContextMenu, submenu 至少
      * 跟主菜单同宽. 用户视觉感受 "菜单系列宽度一致". */
     void SetMinPropagatedWidth(float w) { minPropagatedWidth_ = w; InvalidateLayout(); }
-    /* build 85: expose MenuWidth — PageState 算完 reserved 后查 final 宽,
+    /*  expose MenuWidth — PageState 算完 reserved 后查 final 宽,
      * 再 propagate 到 submenu. */
     float MenuWidth() const;
     float MenuHeight() const;
@@ -185,10 +185,10 @@ private:
      * backdrop capture, >0 = explicit caller-controlled radius. The material
      * itself is controlled by frostedMaterial_. */
     float backdropBlurRadius_ = -1.0f;
-    /* Build 69+ (L19): per-menu 圆角. -1 = 用 kCornerRadius 默认. 公共 API
+    /* Build 69+: per-menu 圆角. -1 = 用 kCornerRadius 默认. 公共 API
      * ui_menu_set_corner_radius 写这个字段. */
     float cornerRadius_ = -1.0f;
-    /* Build 73 (L17): reactive menu — 反应式 .uix 走 PageState 注册的 hook
+    /* Build 73: reactive menu — 反应式 .uix 走 PageState 注册的 hook
      * 在 Show 入口先重 populate items. 详见 h::SetBeforeShowHook. */
     std::function<void()> beforeShowHook_;
     /* Build 77+: PageState 算的 "max shortcut across all items including

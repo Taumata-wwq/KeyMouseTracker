@@ -24,3 +24,5 @@ out_manifest_check.xml
 
 # 设计协作可视化会话临时数据
 .superpowers/
+# 本地打包输出（GitHub Release 附件源）
+dist/

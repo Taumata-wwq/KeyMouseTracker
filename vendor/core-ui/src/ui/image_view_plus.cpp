@@ -174,7 +174,7 @@ void ImageViewPlusWidget::EnsureCheckerboardTile(Renderer& r) {
         c1 = (255u << 24) | (71u << 16)  | (64u << 8)  | 64u;
         c2 = (255u << 24) | (56u << 16)  | (51u << 8)  | 51u;
     } else {
-        /* build 280: 浅色格子提亮到 #FAFAFA/#E6E6E6 —— 旧的 #CCCCCC/#999999
+        /* 浅色格子提亮到 #FAFAFA/#E6E6E6 —— 旧的 #CCCCCC/#999999
          * 在浅色主题下压得太重, 透明区看起来比图还抢眼。 */
         c1 = (255u << 24) | (250u << 16) | (250u << 8) | 250u;
         c2 = (255u << 24) | (230u << 16) | (230u << 8) | 230u;

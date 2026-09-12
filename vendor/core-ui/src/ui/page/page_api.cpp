@@ -277,7 +277,7 @@ bool CompileAndAttachPage(PageEntry& e, const std::string& rawText) {
     bool anyScoped = false;
     std::string pageScopeId = "p" + std::to_string(g_nextScopeId++);
 
-    /* build 77 (L17 跟进): lib 内置 menu 默认 CSS — 给 compiler 合成的
+    /* lib 内置 menu 默认 CSS — 给 compiler 合成的
      * <div class="menuitem-row"> 包装 + 内部 svg / label 提供合理 baseline.
      * 放在用户 <style> 块之前 parse, rules 先压入 sheet → 用户后写的同选择器
      * 规则因为 source order 较后, cascade 自动覆盖 (e.g. 用户写
@@ -290,7 +290,7 @@ bool CompileAndAttachPage(PageEntry& e, const std::string& rawText) {
   gap: 8px;
   padding: 0 8px;
   /* 控制单 item 内容最大宽度. 用户在 <style> 写 .menuitem-row { max-width: 400px }
-   * 覆盖. 默认 140 适合短中文 + 常见 shortcut 组合; build 80 收紧 gap+padding
+   * 覆盖. 默认 140 适合短中文 + 常见 shortcut 组合；后续版本收紧了 gap+padding
    * 配合 kMinWidth=235 目标 ~400 px on-screen (163% DPI). */
   max-width: 140px;
 }
@@ -301,7 +301,7 @@ bool CompileAndAttachPage(PageEntry& e, const std::string& rawText) {
 }
 .menuitem-row label {
   font-size: 13.5px;
-  /* 菜单项单行 (L100): 配合 HBoxWidget flex-shrink (build 141), 超长 label 被
+  /* 菜单项单行 配合 HBoxWidget flex-shrink，超长 label 被
    * 收缩到行宽后走单行 ellipsis "abc…", 而非默认软换行折成多行、撑高 item
    * 溢出压到相邻项。需要多行菜单项的调用方用户 CSS 覆盖 white-space: normal。 */
   white-space: nowrap;
@@ -583,7 +583,7 @@ static UiWindow page_open_or_prepare_(UiPage p,
     if (show) {
         ui_window_show(win);
     } else {
-        /* prepare-only 路径 (build 99+ L27): RT 提前创建好, 等 caller 同步预热
+        /* prepare-only 路径 RT 提前创建好, 等 caller 同步预热
          * (decode + 上 bitmap 等) 之后再 ui_window_show_immediate 一次性出图.
          * 没 RT 时 first paint 慢, 提前 prepare 把这部分提到 show 之前. */
         ui_window_prepare_rt(win);

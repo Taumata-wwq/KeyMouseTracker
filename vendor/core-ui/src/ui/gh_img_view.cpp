@@ -1,10 +1,10 @@
 // gh_img_view.cpp — 通用瓦块画布 widget 实现。
 //
 // 渲染思路：
-//   1. ComputeDestRect 算出"图像在屏幕上占多大"
-//   2. preview ResourceKey 存在则先画一张兜底
-//   3. 遍历可见瓦块（active level 网格），有 ResourceKey 就画上去
-//   4. 缺的瓦块就让 preview 透出来 → 渐进式 LOD 体验
+// 1. ComputeDestRect 算出"图像在屏幕上占多大"
+// 2. preview ResourceKey 存在则先画一张兜底
+// 3. 遍历可见瓦块（active level 网格），有 ResourceKey 就画上去
+// 4. 缺的瓦块就让 preview 透出来 → 渐进式 LOD 体验
 //
 // auto-level：zoom 跨越某 level 阈值时自动切 active level，但**不**主动清旧
 // 数据 —— 由调用方决定何时清（Begin / ClearLevel / Clear）。这样切级时不会
@@ -68,12 +68,12 @@ inline void RotateCCW(int angle, float x, float y, float& rx, float& ry) {
 }
 
 // Pick D2D interpolation by draw scale (screen px per source px). 三档 (L190 + L191):
-//   <0.5  大幅缩小  → HQ_CUBIC: D2D 对大幅下采带 prefilter, 抗欠采样。此时源边缘已被
-//         prefilter 抹成渐变, cubic 负权【不会 ring】(ring 只在锐边发生)。若改用 LINEAR,
-//         2×2 双线性在大幅下采漏采源像素 → 文字/细节锯齿发硬 (单层图 / 文档扫描)。
-//   0.5~1.0 适度缩小 → LINEAR: 边缘仍锐, HQ_CUBIC 负权会过冲 ring 出光晕 ("锐化过头");
-//         LINEAR 2×2 无负权不过冲。fit 看图主场景 (金字塔活动层略缩小) 落此档。
-//   >=1.0 放大       → HQ_CUBIC: 上采取其平滑。
+// <0.5  大幅缩小  → HQ_CUBIC: D2D 对大幅下采带 prefilter, 抗欠采样。此时源边缘已被
+// prefilter 抹成渐变, cubic 负权【不会 ring】(ring 只在锐边发生)。若改用 LINEAR,
+// 2×2 双线性在大幅下采漏采源像素 → 文字/细节锯齿发硬 (单层图 / 文档扫描)。
+// 0.5~1.0 适度缩小 → LINEAR: 边缘仍锐, HQ_CUBIC 负权会过冲 ring 出光晕 ("锐化过头");
+// LINEAR 2×2 无负权不过冲。fit 看图主场景 (金字塔活动层略缩小) 落此档。
+// >=1.0 放大       → HQ_CUBIC: 上采取其平滑。
 // (D2D 没有 HIGH_QUALITY_LINEAR 常量, LINEAR 即标准 bilinear。)
 //
 // 演进: 初版 <0.5 用 LINEAR (想当然"大幅下采 cubic ring", 实际 prefilter 已抹平锐边,
@@ -83,7 +83,7 @@ inline D2D1_INTERPOLATION_MODE PickInterp(float screen_per_source) {
     if (screen_per_source < 0.5f)
         return D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;  // 大幅缩小: prefilter 抗欠采样
     return screen_per_source < 1.0f
-        ? D2D1_INTERPOLATION_MODE_LINEAR                    // 适度缩小: 无过冲 (L190)
+        ? D2D1_INTERPOLATION_MODE_LINEAR                    // 适度缩小: 无过冲
         : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;       // 放大: 平滑
 }
 
@@ -113,7 +113,7 @@ inline int NormalizeAngle(int a) {
 GhImgViewWidget::GhImgViewWidget() {
     // bgColor 沿用基类默认 {0,0,0,0} = 透明，跟其它 core-ui widget 一致。
     // 宿主需要自定义底色，在 .uix 里写
-    //     gh_img_view { background: <color> | <gradient>; }
+    // gh_img_view { background: <color> | <gradient>; }
     // CSS 的 background 不会自动从父容器继承（CSS 标准行为），但 widget 默认
     // 透明意味着父容器的 background（含 linear-gradient 棋盘格）会透出来 ——
     // 这是看图软件常见的浅灰/棋盘格画布外观需要的 baseline。
@@ -1655,7 +1655,7 @@ void GhImgViewWidget::EnsureCheckerboardTile_(Renderer& r) {
         c1 = (255u << 24) | (71u << 16)  | (64u << 8)  | 64u;
         c2 = (255u << 24) | (56u << 16)  | (51u << 8)  | 51u;
     } else {
-        /* build 280: 浅色格子提亮到 #FAFAFA/#E6E6E6 —— 旧的 #CCCCCC/#999999
+        /*  浅色格子提亮到 #FAFAFA/#E6E6E6 —— 旧的 #CCCCCC/#999999
          * 在浅色主题下压得太重, 透明区看起来比图还抢眼。 */
         c1 = (255u << 24) | (250u << 16) | (250u << 8) | 250u;
         c2 = (255u << 24) | (230u << 16) | (230u << 8) | 230u;
@@ -1753,7 +1753,7 @@ void GhImgViewWidget::Begin(const Info& info, Renderer& r) {
     }
 
     tiles_.clear();
-    /* L168: keepPreview 时不清 preview 兜底层 — preview 在 OnDraw 永远先画兜底,
+    /* keepPreview 时不清 preview 兜底层 — preview 在 OnDraw 永远先画兜底,
      * tile 逐级盖上, 清晰度物理单调, 消除切金字塔时的闪烁。 */
     if (!info.keepPreview) {
         previewResourceKey_ = {};
@@ -1842,7 +1842,7 @@ void GhImgViewWidget::SetTile(uint32_t level, uint32_t tx, uint32_t ty,
         PixelFormat::BgraStraight, bgra, true);
     if (!resourceKey.IsValid()) return;
 
-    // L48: 不再做 LRU evict — viewport trim 在 NotifyViewport 内做, 跟 viewport
+    // 不再做 LRU evict — viewport trim 在 NotifyViewport 内做, 跟 viewport
     // 边界严格绑定. SetTile 只负责装新 tile, 不主动 evict.
     Tile t;
     t.resourceKey = resourceKey;
@@ -1852,7 +1852,7 @@ void GhImgViewWidget::SetTile(uint32_t level, uint32_t tx, uint32_t ty,
     auto old = tiles_.find(key);
     if (old != tiles_.end()) GlobalResourceStore().Remove(old->second.resourceKey);
     tiles_[key] = std::move(t);
-    if (!tileBatch_) InvalidateAllWindows();   // L115: batch 内不刷, EndTileBatch 一次刷
+    if (!tileBatch_) InvalidateAllWindows();   // batch 内不刷, EndTileBatch 一次刷
 }
 
 void GhImgViewWidget::EndTileBatch() {
@@ -1896,7 +1896,7 @@ void GhImgViewWidget::RequestViewportCommit() {
 void GhImgViewWidget::TrimToViewport_(uint32_t active_level,
                                        uint32_t visible_tx0, uint32_t visible_tx1,
                                        uint32_t visible_ty0, uint32_t visible_ty1) {
-    // L48: 清掉 tiles_ 中 (1) 非 active_level 的全部 tile + (2) active_level
+    // 清掉 tiles_ 中 (1) 非 active_level 的全部 tile + (2) active_level
     // 内但不在 viewport [tx0,tx1) × [ty0,ty1) 范围的 tile. 每个被清的 tile
     // fire onTileEvicted, caller 同步自己端 pushed_tiles_ erase.
     //
@@ -1908,7 +1908,7 @@ void GhImgViewWidget::TrimToViewport_(uint32_t active_level,
         const bool in_viewport = (k.level == active_level &&
                                     k.tx >= visible_tx0 && k.tx < visible_tx1 &&
                                     k.ty >= visible_ty0 && k.ty < visible_ty1);
-        // L115: 保留上一个 active level 的 tile — OnDraw 多级 fallback 用它覆盖新级
+        // 保留上一个 active level 的 tile — OnDraw 多级 fallback 用它覆盖新级
         // 未到达的 tile, 切级清晰→更清晰无波浪 (旧级 tile 数约新级 1/4, 内存可忽略)。
         const bool keep_prev = (k.level == prevActiveLevel_);
         if (in_viewport || keep_prev) { ++it; continue; }
@@ -1960,7 +1960,7 @@ void GhImgViewWidget::Clear() {
 
 // ---- SVG 矢量源 (Build 70+ L20) ----
 
-/* L195: LunaSVG 无内置字体、也不解析 SVG 内嵌 @font-face → 不注册任何字体则
+/* LunaSVG 无内置字体、也不解析 SVG 内嵌 @font-face → 不注册任何字体则
  * <text> 全部渲染不出 (getFontFace 落空 → null face → 无字形)。给它注册一个
  * 系统 CJK fallback 字体, 注册成 empty family "" (LunaSVG 的通配回退: 任何没注册
  * 的 font-family 都落到它)。lazy 一次 — FontFaceCache 是进程级全局静态。 */
@@ -2002,7 +2002,7 @@ static void EnsureLunaSvgFallbackFont_() {
 bool GhImgViewWidget::SetSvgFromFile(const std::wstring& path, Renderer& r) {
     const bool hasImmediateD2D = r.RT5() != nullptr;
 
-    /* D2D SvgDocument remains the preferred interactive view, but build 223+
+    /* D2D SvgDocument remains the preferred interactive view, but +
      * can release the UI thread render target after render-thread present takes
      * over. Loading must therefore validate/store XML without requiring a UI
      * RT; the render thread will recreate the SvgDocument while replaying the
@@ -2247,7 +2247,7 @@ int GhImgViewWidget::RenderSvgToBgra(uint32_t target_w, uint32_t target_h,
     return 0;
 }
 
-// L196: SVG 主视图按可见源矩形重栅到 svgRaster_。整图单 bitmap 有固定 cap,
+// SVG 主视图按可见源矩形重栅到 svgRaster_。整图单 bitmap 有固定 cap,
 // 高倍放大文字时必然上采样发糊; 视口重栅让输出尺寸只跟当前窗口/zoom 档有关。
 void GhImgViewWidget::EnsureSvgRaster(float srcL, float srcT, float srcR, float srcB,
                                       uint32_t renW, uint32_t renH, Renderer& r) {
@@ -2477,11 +2477,11 @@ void GhImgViewWidget::SetZoomAround(float z, float anchorX, float anchorY) {
     // 3) 反算 pan 使 (ix, iy) 仍落在 (anchorX, anchorY)
     //
     // Forward image (ix, iy) → screen (sx, sy):
-    //   fx = (ix - fullW/2) * zoom_new
-    //   fy = (iy - fullH/2) * zoom_new
-    //   (rx, ry) = RotateCW(rotation_, fx, fy)
-    //   sx = widget_cx + panX + rx
-    //   sy = widget_cy + panY + ry
+    // fx = (ix - fullW/2) * zoom_new
+    // fy = (iy - fullH/2) * zoom_new
+    // (rx, ry) = RotateCW(rotation_, fx, fy)
+    // sx = widget_cx + panX + rx
+    // sy = widget_cy + panY + ry
     //
     // 要求 sx = anchorX, sy = anchorY → panX/Y = anchor - widget_center - (rx/ry).
     float fullW = (float)info_.fullWidth;
@@ -2830,8 +2830,8 @@ void GhImgViewWidget::OnDraw(Renderer& r) {
     }
 
     // 2) 多级金字塔：从最粗到最细，每级把已加载的可见瓦块画上去。
-    //    后画的覆盖先画的 → active level（最细）压在最上面，旧级在下兜底。
-    //    切级瞬间新级瓦块还没全到时，已有的旧级仍盖在 preview 之上 —— 无缝过渡。
+    // 后画的覆盖先画的 → active level（最细）压在最上面，旧级在下兜底。
+    // 切级瞬间新级瓦块还没全到时，已有的旧级仍盖在 preview 之上 —— 无缝过渡。
     if (info_.levels > 0) {
         // 只画 活动层 + 比它更低清的层 (lvl >= active) —— 低清层在活动层瓦块未到达时
         // 画在其【下方】兜底 gap。不画比活动层【更高清】的残留层 (lvl < active, 如放大
@@ -2870,7 +2870,7 @@ bool GhImgViewWidget::VisibleTileRange_(uint32_t level, const D2D1_RECT_F& dest,
     uint32_t txMax = (lw + ts - 1) / ts;
     uint32_t tyMax = (lh + ts - 1) / ts;
 
-    // L194: 分轴 scale。极端宽高比图 (超长/超宽) 在 coarse level 宽比≠高比,
+    // 分轴 scale。极端宽高比图 (超长/超宽) 在 coarse level 宽比≠高比,
     // 用单一 (宽) scale 缩 Y 会让该级溢出 dest 底边 → X 用 scaleX, Y 用 scaleY。
     float scaleX = LevelToScreenScale (level) * zoom_;
     float scaleY = LevelToScreenScaleY(level) * zoom_;
@@ -3096,7 +3096,7 @@ float GhImgViewWidget::LevelToScreenScale(uint32_t level) const {
 }
 
 float GhImgViewWidget::LevelToScreenScaleY(uint32_t level) const {
-    // L194: 顶级高 / level 高 —— Y 轴独立比例。LevelW/LevelH 各自 floor 折半,
+    // 顶级高 / level 高 —— Y 轴独立比例。LevelW/LevelH 各自 floor 折半,
     // 极端宽高比 (如 1080x29679) 在 coarse level 宽比≠高比 (lvl5: 32.7 vs 32.0),
     // 用宽比缩 Y 会让该级比图像真高多出几百~上千 px, 从底边溢出 → 必须分轴。
     if (info_.fullHeight == 0) return 1.0f;
@@ -3191,18 +3191,18 @@ uint32_t GhImgViewWidget::PickAutoLevel() const {
     // 自带 mipmap LOD + 低通滤波), 所以宁可下采样几倍, 也别上采样 1.x.
     //
     // 实例 (世界地图 9934px fit zoom=0.108, DPI 150% dpi_scale=1.5):
-    //   L0 scale_phys = 1.0  * 0.108 * 1.5 = 0.162   (下采样 6.2x)
-    //   L1            = 2.0  * ...        = 0.324   (下采样 3.1x)
-    //   L2            = 4.0  * ...        = 0.648   (下采样 1.5x) ⭐ 选这个
-    //   L3            = 8.0  * ...        = 1.296   (上采样 1.3x = 旧算法选)
-    //   L4            = 16.0 * ...        = 2.592   (上采样 2.6x)
+    // L0 scale_phys = 1.0  * 0.108 * 1.5 = 0.162   (下采样 6.2x)
+    // L1            = 2.0  * ...        = 0.324   (下采样 3.1x)
+    // L2            = 4.0  * ...        = 0.648   (下采样 1.5x) ⭐ 选这个
+    // L3            = 8.0  * ...        = 1.296   (上采样 1.3x = 旧算法选)
+    // L4            = 16.0 * ...        = 2.592   (上采样 2.6x)
     //
     // 算法: lvl=0 升序遍历, scale_phys 单调增. 一旦 > 1.0 退出, 返上一个
     // (= 满足 ≤ 1.0 的最大 lvl). 极小 zoom (全部 ≤ 1) 自然返 levels-1
     // (最高 lvl = 最小 mip, 兜底). zoom 大 (L0 已 > 1) 返 0 (初始, 最高
     // 分辨率 mip, 必然上采样但 caller 主动放大).
     //
-    // 历史: build 52 修过算法方向 (旧是反的). build 100 阈值 1.0→0.5 缓解
+    // 历史:  修过算法方向 (旧是反的).  阈值 1.0→0.5 缓解
     // 但没感知 DPI, 150% scaling 下按 DIP 算 0.5 = 物理 0.75 仍偏向上采样.
     // 本版直接按 物理px 算 + 改"≤ 1.0 最大 lvl"逻辑, 根治.
     if (info_.levels == 0) return 0;
@@ -3219,7 +3219,7 @@ uint32_t GhImgViewWidget::PickAutoLevel() const {
 
 void GhImgViewWidget::SwitchLevel(uint32_t level) {
     if (level >= info_.levels) level = info_.levels - 1;
-    // L115: 切级时记下旧级, TrimToViewport_ 据此保留旧级 tile 供 OnDraw fallback 覆盖。
+    // 切级时记下旧级, TrimToViewport_ 据此保留旧级 tile 供 OnDraw fallback 覆盖。
     if (level != activeLevel_) prevActiveLevel_ = activeLevel_;
     activeLevel_ = level;
 }
@@ -3256,7 +3256,7 @@ void GhImgViewWidget::NotifyViewport() {
     uint32_t tyMax = (lh + ts - 1) / ts;
 
     D2D1_RECT_F dest = ComputeDestRect();
-    float scaleX = LevelToScreenScale (activeLevel_) * zoom_;   // L194: 分轴, 同 DrawLevel
+    float scaleX = LevelToScreenScale (activeLevel_) * zoom_;   // 分轴, 同 DrawLevel
     float scaleY = LevelToScreenScaleY(activeLevel_) * zoom_;
     if (scaleX <= 1e-6f || scaleY <= 1e-6f) {
         vp.visibleTx0 = vp.visibleTy0 = 0;
@@ -3292,7 +3292,7 @@ void GhImgViewWidget::NotifyViewport() {
         vp.visibleTy1 = (uint32_t)ty1;
     }
 
-    // L48: 主动 trim viewport 外的 tile + 非 active level 的全部 tile.
+    // 主动 trim viewport 外的 tile + 非 active level 的全部 tile.
     // 每个被清的 tile fire onTileEvicted → caller 同步 pushed_tiles_ erase.
     // 跟用户记忆的"按区加载内存小"行为对齐, 内存稳态 = viewport tile × 256KB.
     TrimToViewport_(vp.activeLevel, vp.visibleTx0, vp.visibleTx1,

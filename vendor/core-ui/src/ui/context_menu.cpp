@@ -155,7 +155,7 @@ void BoxBlurBgra(std::vector<uint8_t>& pixels, int width, int height, int radius
 
 }  // namespace
 
-// ---- Build (build 75 BREAKING: widget-tree based items) ----
+// ---- Build  ----
 
 void ContextMenu::AddItemContent(int id, const std::wstring& shortcut,
                                   WidgetPtr content) {
@@ -196,7 +196,7 @@ void ContextMenu::SetEnabled(int id, bool enabled) {
     }
 }
 
-// ---- Reactive rebuild (build 73 / L17) ----
+// ---- Reactive rebuild  ----
 
 ContextMenu* ContextMenu::OpenSubmenuAt(int index) {
     /* Build 85: mimic HandleMouseMove submenu-open path. 调试 / 测试用,
@@ -249,7 +249,7 @@ void ContextMenu::Clear() {
 // ---- Show / Hide ----
 
 void ContextMenu::Show(float x, float y, const D2D1_RECT_F& viewport) {
-    /* Build 73 (L17): reactive .uix 菜单先 rebuild items 再算宽高. 老的
+    /* Build 73: reactive .uix 菜单先 rebuild items 再算宽高. 老的
      * imperative 路径没设 hook, items 早就建好, no-op. */
     if (beforeShowHook_) beforeShowHook_();
 
@@ -284,7 +284,7 @@ void ContextMenu::ShowPopup(HWND parentHwnd, int screenX, int screenY) {
     // Clamp to the monitor under the requested point — based on visual menu rect
     // (not the shadow-padded hwnd). 旧代码用 GetSystemMetrics(SM_CXSCREEN/CYSCREEN)
     // (主屏尺寸) + clamp 到 [0, 主屏宽], 会把副屏的菜单坐标 (screenX 可能 > 主屏宽
-    // 或 < 0) 硬拉回主屏 → 副屏右键菜单 / 菜单栏下拉 / submenu 全弹到主屏 (L120)。
+    // 或 < 0) 硬拉回主屏 → 副屏右键菜单 / 菜单栏下拉 / submenu 全弹到主屏。
     // 改用菜单所在屏 (鼠标点所在 monitor) 的 rcWork (工作区, 顺带避开任务栏)。
     HMONITOR hMon = MonitorFromPoint(POINT{ screenX, screenY }, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi{ sizeof(mi) };
@@ -945,14 +945,14 @@ LRESULT ContextMenu::HandleOverlayMessage(HWND hwnd, UINT msg, WPARAM wParam,
 // ---- Geometry ----
 
 bool ContextMenu::HasAnyIcon() const {
-    /* BREAKING (build 75): MenuItem 没有 hasIcon 字段了, icon 是 customContent
+    /* BREAKING : MenuItem 没有 hasIcon 字段了, icon 是 customContent
      * widget tree 的一部分. 始终预留 icon 列宽度 — 不预留会让用户写
      * <menuitem><svg/><label/></menuitem> 时 svg 紧贴左边. */
     return !items_.empty();
 }
 
 float ContextMenu::MenuWidth() const {
-    /* BREAKING (build 75): 老的 text/shortcut 文字宽度估算改成: 用 customContent
+    /* BREAKING : 老的 text/shortcut 文字宽度估算改成: 用 customContent
      * widget tree 的 SizeHint() 取 max. customContent 还没 DoLayout 过, SizeHint
      * 在大多数 widget 上返 (fixedW, fixedH) 或 (0,0), 估算可能不准. 兜底走
      * kMinWidth = 200. 后续如要更准, 应在 PopulateMenuItem 末尾对每个 customContent
@@ -1146,7 +1146,7 @@ void ContextMenu::Draw(Renderer& r) {
         r.FillRoundedRect(bgRect, cr, cr, cardBg);
     }
 
-    // BREAKING (build 75): items 走 widget-tree 渲染. 每个 menuitem 的
+    // BREAKING : items 走 widget-tree 渲染. 每个 menuitem 的
     // customContent (WidgetPtr) 在 item 的 content-rect 内 DoLayout + DrawTree.
     // ContextMenu 自己只画: separator / hover 高亮 / shortcut 文字 (右对齐) /
     // submenu arrow. disabled 通过临时 set opacity dim.
@@ -1249,7 +1249,7 @@ bool ContextMenu::HandleMouseMove(float x, float y) {
                     D2D1_RECT_F ir = ItemRect(hit);
                     // rc 是 hwnd 外圈, 含 kShadowMargin 的 drop-shadow padding.
                     // 减掉 marginPx 拿"可见卡片"的右边作 submenu anchor — 否则
-                    // submenu 跟父菜单之间留 ~18px (高 DPI 更大) 透明空白 (L17).
+                    // submenu 跟父菜单之间留 ~18px (高 DPI 更大) 透明空白.
                     UINT subDpi = GetDpiForWindow(popupHwnd_);
                     float subScale = (float)subDpi / 96.0f;
                     int marginPx = (int)(kShadowMargin * subScale);

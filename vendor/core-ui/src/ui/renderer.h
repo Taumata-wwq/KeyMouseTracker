@@ -233,7 +233,7 @@ public:
     void PushRoundedClip(const D2D1_RECT_F& rect, float rx, float ry);
     void PopRoundedClip();
 
-    /* ---- 视口剔除 (build 285) --------------------------------------------
+    /* ---- 视口剔除   --------------------------------------------
      * opt-in: 只有明确 PushCull 的容器 (目前只有 ScrollViewWidget) 才启用。
      * 栈为空时 IsCulled 恒为 false, 所有既有绘制路径行为不变。
      *
@@ -323,7 +323,7 @@ public:
     void ApplyTextRenderMode();
 
 private:
-    /* 视口剔除矩形栈 (build 285). 嵌套 ScrollView 时取交集 —— 内层只可能比
+    /* 视口剔除矩形栈 . 嵌套 ScrollView 时取交集 —— 内层只可能比
      * 外层更小, 存交集省得判定时反复回溯整个栈。 */
     std::vector<D2D1_RECT_F> cullStack_;
 

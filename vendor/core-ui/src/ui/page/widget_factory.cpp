@@ -108,9 +108,9 @@ namespace {
 // Parse CSS transition declaration into widget.transitions vector.
 // Accepts: "opacity 200ms ease-out" or multiple comma-separated entries.
 // Property id mapping (matches ui::AnimProperty enum):
-//   opacity=0, posX=1, posY=2, width=3, height=4, bgColorR=5, bgColorG=6, bgColorB=7, bgColorA=8
+// opacity=0, posX=1, posY=2, width=3, height=4, bgColorR=5, bgColorG=6, bgColorB=7, bgColorA=8
 // Easing id mapping (matches ui::EasingFunction enum, same as markup_builder):
-//   linear=0, ease-in=4, ease-out=5 (default), ease-in-out=6
+// linear=0, ease-in=4, ease-out=5 (default), ease-in-out=6
 void ParseTransitions(Widget& w, const std::string& raw) {
     w.transitions.clear();
     std::string buf;
@@ -445,9 +445,14 @@ void ApplyCommonStyle(Widget& w, const ui::css::ComputedStyle& s) {
     if (s.Has("display")) {
         const std::string& v = s.Get("display");
         if      (v == "none")          w.visible = false;
-        else if (v == "inline")        w.display = Display::Inline;
-        else if (v == "inline-block")  w.display = Display::InlineBlock;
-        else if (v == "block")         w.display = Display::Block;
+        else {
+            // 非 none 即恢复可见：否则 display:none→block 的动态切换（如
+            // :hover 展开）只改 display、不会把 visible 设回 true，导致展开失效。
+            w.visible = true;
+            if      (v == "inline")        w.display = Display::Inline;
+            else if (v == "inline-block")  w.display = Display::InlineBlock;
+            else if (v == "block")         w.display = Display::Block;
+        }
     }
 
     // Visibility: hidden → visible=false (we collapse the distinction)
@@ -611,8 +616,8 @@ void ApplyCommonStyle(Widget& w, const ui::css::ComputedStyle& s) {
     }
 
     // ---- Style overrides that map into Widget::CssOverride so built-in
-    //      controls (TextInput, Slider, CheckBox, etc.) can read them in their
-    //      OnDraw and break away from theme defaults.
+    // controls (TextInput, Slider, CheckBox, etc.) can read them in their
+    // OnDraw and break away from theme defaults.
     auto parseColor = [](const std::string& v, D2D1_COLOR_F& out) -> bool {
         ui::css::Color c;
         if (!ui::css::ParseColor(v, c)) return false;
@@ -697,7 +702,7 @@ void ApplyCommonStyle(Widget& w, const ui::css::ComputedStyle& s) {
             lbl->SetSelectable(v == "text" || v == "all");
         }
     }
-    // white-space — applies to LabelWidget (build 93, L22).
+    // white-space — applies to LabelWidget .
     // CSS: nowrap → 单行渲染, 文本超出容器自动 ellipsis "abc..." (DWrite
     // 在 renderer.cpp 已实现, wrap=false 时自动启 trimming). normal /
     // pre-wrap / 缺省 = 保持默认 wrap=true.
@@ -708,7 +713,7 @@ void ApplyCommonStyle(Widget& w, const ui::css::ComputedStyle& s) {
             else if (v == "normal" || v == "pre-wrap") lbl->SetWrap(true);
         }
     }
-    // line-height — applies to LabelWidget single-row height (build 92, L20).
+    // line-height — applies to LabelWidget single-row height .
     // CSS spec: unitless (1.3) = multiplier of font-size; with unit (17px) = absolute.
     // 0 / 缺省 = lib default 1.3 × font-size.
     if (s.Has("line-height")) {
@@ -996,7 +1001,13 @@ WidgetPtr ConstructByTag(const std::string& tag, const std::string& text,
     // <ScrollView>: vertical scrollable container. Compiler wraps children into
     // a single content widget after recursion (see compiler.cpp).
     if (tag == "ScrollView" || tag == "scroll-view") {
-        return std::make_shared<ScrollViewWidget>();
+        auto sv = std::make_shared<ScrollViewWidget>();
+        for (const auto& a : node.attrs) {
+            if (a.kind == ui::uix::AttrKind::Static && a.name == "auto-hide-scrollbar") {
+                sv->SetAutoHideScrollbar(ParseBoolAttr(a.rawValue));
+            }
+        }
+        return sv;
     }
     if (tag == "gh_img_view" || tag == "gh-img-view" ||
         tag == "gh_img" || tag == "gh-img") {
@@ -1153,11 +1164,11 @@ WidgetPtr ConstructByTag(const std::string& tag, const std::string& text,
     if (tag == "svg") {
         auto svg = std::make_shared<SvgWidget>();
         // SVG attribute model:
-        //   width/height set the rendered widget size (fixedW / fixedH).
-        //   viewBox="minX minY w h" sets the path coordinate system
-        //     (vpWidth / vpHeight). The OnDraw scale factor is
-        //     min(rectW/vpW, rectH/vpH); without a real viewBox, paths
-        //     drawn against 0..24 coords will overflow a 20×20 widget.
+        // width/height set the rendered widget size (fixedW / fixedH).
+        // viewBox="minX minY w h" sets the path coordinate system
+        // (vpWidth / vpHeight). The OnDraw scale factor is
+        // min(rectW/vpW, rectH/vpH); without a real viewBox, paths
+        // drawn against 0..24 coords will overflow a 20×20 widget.
         for (const auto& a : node.attrs) {
             if (a.kind != ui::uix::AttrKind::Static) continue;
             if (a.name == "width") {
@@ -1331,7 +1342,7 @@ WidgetPtr BuildWidget(const ui::uix::Node& node, const ui::css::ComputedStyle& s
     // `align-self: stretch`. ApplyCommonStyle below will overwrite if CSS
     // explicitly sets `display:` so this default is purely a fallback.
     // (LabelWidget / IconButtonWidget already handled in their factory branches:
-    //  Inline + InlineBlock respectively.)
+    // Inline + InlineBlock respectively.)
     if (dynamic_cast<ButtonWidget*>(w.get())          ||
         dynamic_cast<CaptionButtonWidget*>(w.get())   ||
         dynamic_cast<IconButtonWidget*>(w.get())      ||

@@ -1,6 +1,6 @@
 #pragma once
 
-/* MsgBox — 独立窗口模态询问框 (build 158, GuoheView L148)。
+/* MsgBox — 独立窗口模态询问框。
  *
  * 像系统 MessageBox 的使用手感: 同步阻塞、返回被点按钮索引、支持 1..4
  * 个自定义按钮、Enter=默认按钮、Esc/关闭=取消按钮。
@@ -11,7 +11,7 @@
  * 主题/hover/focus/Tab 导航全部自动获得。参考 GuoheView 图片信息窗的
  * 窗口形态。
  *
- * 取代旧的 in-window DialogWidget (ui_dialog_*, build 158 BREAKING 移除)。
+ * 取代旧的 in-window DialogWidget (ui_dialog_*, 后续版本移除)。
  */
 
 #include <string>
@@ -36,7 +36,7 @@ public:
                                const std::vector<int>& button_keys = {});  /* 每按钮 VK 绑定; 空=无 */
 };
 
-/* ---- IPC 自动化钩子 (build 172) — 让 ui_debug_server 驱动当前活动 msgbox。
+/* ---- IPC 自动化钩子 — 让 ui_debug_server 驱动当前活动 msgbox。
  * 全部必须在 UI 线程调 (debug server 经 ui_window_invoke_sync marshal)。模态
  * 唯一, 故"当前活动"就是栈顶那个 (支持嵌套)。 */
 struct MsgBoxDebugInfo {
@@ -44,7 +44,7 @@ struct MsgBoxDebugInfo {
     int  default_idx = 0;
     int  cancel_idx  = -1;
     int  button_count = 0;
-    int  focused_idx = -1;        /* build 174: 当前键盘焦点按钮 (-1=无) */
+    int  focused_idx = -1;        /* 当前键盘焦点按钮 (-1=无) */
     std::wstring title;
     std::vector<std::wstring> buttons;
 };

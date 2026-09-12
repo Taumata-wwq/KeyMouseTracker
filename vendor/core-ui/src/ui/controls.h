@@ -30,7 +30,7 @@ public:
     void SetWrap(bool w) { wrap_ = w; }
     void SetMaxLines(int n) { maxLines_ = n; }
 
-    /* CSS line-height (build 92+):
+    /* CSS line-height :
      *   unitless 倍数 (推荐, 跟 font-size 联动): SetLineHeightRatio(1.3f)
      *   显式像素值:                              SetLineHeightPx(17.0f)
      * 都 0 时走默认 1.3 × font-size (跟现代浏览器 / Win11 Fluent UI 一致).
@@ -221,7 +221,7 @@ public:
 // 这里只做：按 src 名字从 ui::asset 取字节 → WIC 解码 → 按 rect 绘制。
 //
 // fit 控制如何把位图填进 rect：
-//   Fill / Fit / None / Cover —— 跟 CSS object-fit 大致对齐
+// Fill / Fit / None / Cover —— 跟 CSS object-fit 大致对齐
 class UI_API ImageWidget : public Widget {
 public:
     enum class Fit { Fill, Contain, Cover, None };
@@ -230,7 +230,7 @@ public:
     ~ImageWidget() override;
     explicit ImageWidget(const std::string& src);
 
-    /* 让所有 src == name 且上次解析失败的实例重新尝试 (build 286)。
+    /* 让所有 src == name 且上次解析失败的实例重新尝试 。
      *
      * 用途: 宿主的 asset resolver 是异步喂数据的 —— 第一次被问到时字节还没
      * 从磁盘读上来, 只能返回失败; 而 loadFailed_ 会把这个 widget 永久钉死,
@@ -419,7 +419,7 @@ public:
 
     bool NeedsScrollbar() const;
 
-    /* 宿主驱动的选区 (build 278) —— 让"外部数据源 ↔ 文本"双向联动可做:
+    /* 宿主驱动的选区  —— 让"外部数据源 ↔ 文本"双向联动可做:
      * 例如 OCR 场景里图上划词后, 宿主把对应文本区间选中并滚到可见。
      * start/end 是 UTF-16 码元下标, 自动交换与 clamp; start==end 清选区。 */
     void SetSelectionRange(int start, int end);
@@ -545,7 +545,7 @@ private:
     void ClampDropdownScroll_(int visibleRows);
 
     std::vector<std::wstring> items_;
-    std::vector<std::string>  i18nKeys_;   // L83: parallel to items_; "" = literal
+    std::vector<std::string>  i18nKeys_;   // parallel to items_; "" = literal
     int selectedIndex_ = 0;
     int hoveredIndex_ = -1;
     int dropdownScrollIndex_ = 0;
@@ -586,8 +586,13 @@ class UI_API ScrollViewWidget : public Widget {
 public:
     void SetContent(WidgetPtr content);
 
+    // 自动隐藏滚动条：指针不在本滚动区域上时，不画滑块且不预留滚动条通道
+    // （内容占满全宽）；悬停进入时恢复滑块与 10px 通道。供 24h 应用列表等使用。
+    void SetAutoHideScrollbar(bool v) { autoHideScrollbar_ = v; }
+    bool AutoHideScrollbar() const { return autoHideScrollbar_; }
+
     float ScrollY() const { return scrollY_; }
-    /* 走与鼠标滚动同一条纯偏移路径 (build 285) —— 此前只改字段不动 rect,
+    /* 走与鼠标滚动同一条纯偏移路径  —— 此前只改字段不动 rect,
      * 内容要等下一次全局布局才归位, 长列表里那次布局就是每帧 O(n) 的来源。 */
     void SetScrollY(float y) {
         const float oldScroll = scrollY_;
@@ -612,6 +617,7 @@ private:
     float contentHeight_ = 0;
     bool draggingThumb_ = false;
     bool hoveringBar_ = false;
+    bool autoHideScrollbar_ = false;
     float dragStartY_ = 0;
     float dragStartScroll_ = 0;
     static constexpr float kBarSpace    = 10.0f;  // 滚动条占用的固定布局宽度
@@ -621,7 +627,7 @@ private:
     float ThumbWidth() const { return (hoveringBar_ || draggingThumb_) ? kThumbWide : kThumbThin; }
     void ClampScroll();
 
-    /* 纯滚动路径 (build 285): 只有 scrollY_ 变了、内容一个字没动时用。
+    /* 纯滚动路径 : 只有 scrollY_ 变了、内容一个字没动时用。
      * DoLayout() 会跑两遍 content_->DoLayout() (一遍量高度一遍定位) 外加一次
      * 全子树递归 measure —— 2000 行实测 2.0ms/帧, 而滚动根本不改变任何尺寸。
      * 这里改成把整棵子树的 rect 平移 delta, 同样 O(n) 但常数小一个量级。
@@ -739,6 +745,15 @@ public:
     void SetValueImmediate(float v) { targetValue_ = std::clamp(v, min_, max_); value_ = targetValue_; valueAnim_.SetImmediate(targetValue_); animating_ = false; }
     void SetIndeterminate(bool v) { indeterminate_ = v; }
     bool IsIndeterminate() const { return indeterminate_; }
+    // 支持动态 :max/:min 绑定 —— 明细/统计类动态最大值 (e.g. 按键排行
+    // max = peak*1.33) 由 computed 求值后通过 page_state.cpp 的 ApplyProperty
+    // 传入。原实现仅 NumberBox 支持 :max 动态绑定，导致 progressbar 的 :max
+    // 走 fallback 被忽略，值被 clamp 到 static max=100 的默认构造值，所有高频
+    // 键都堆到 100% 无对比。这里提供 setter 供 page_state.cpp 调用。
+    void SetMax(float v) { max_ = v; if (targetValue_ > v) targetValue_ = v; if (value_ > v) value_ = v; }
+    void SetMin(float v) { min_ = v; }
+    float Max() const { return max_; }
+    float Min() const { return min_; }
 
     void SetAnimationDuration(float durationMs) { valueAnim_.SetDuration(durationMs); }
     float GetAnimationDuration() const { return valueAnim_.Duration(); }
@@ -1088,9 +1103,9 @@ private:
     int titleWeight_ = 400;   // DWRITE_FONT_WEIGHT_NORMAL
 
     // Icon state — three-tier lookup at OnDraw time:
-    //   1. userIconResourceKey_ 有效 → 用户显式设的图，最高优先
-    //   2. 否则尝试从 GetModuleHandleW(nullptr) 加载 ICON 资源 ID=1
-    //   3. 都没有 → 不画图标，标题文字滑到最左
+    // 1. userIconResourceKey_ 有效 → 用户显式设的图，最高优先
+    // 2. 否则尝试从 GetModuleHandleW(nullptr) 加载 ICON 资源 ID=1
+    // 3. 都没有 → 不画图标，标题文字滑到最左
     // 加载结果缓存到 iconBitmap_。HICON 加载只尝试一次（exeIconAttempted_）。
     ComPtr<ID2D1Bitmap> iconBitmap_;
     bool exeIconAttempted_ = false;
@@ -1255,6 +1270,9 @@ public:
     NumberBoxWidget(float min, float max, float value, float step = 1.0f);
 
     float Value() const { return value_; }
+    float Min() const { return min_; }
+    float Max() const { return max_; }
+    float Step() const { return step_; }
     void SetValue(float v);
     void SetRange(float mn, float mx) { min_ = mn; max_ = mx; Clamp(); }
     void SetStep(float s) { step_ = s; }
@@ -1354,10 +1372,10 @@ private:
 
 // ---- SplitView (WinUI 3 NavigationView-style sidebar) ----
 // Display modes:
-//   Overlay:        pane hidden when closed, slides over content when open
-//   Inline:         pane always visible side-by-side with content
-//   CompactOverlay: narrow icon strip when closed, overlays content when open
-//   CompactInline:  narrow icon strip when closed, pushes content when open
+// Overlay:        pane hidden when closed, slides over content when open
+// Inline:         pane always visible side-by-side with content
+// CompactOverlay: narrow icon strip when closed, overlays content when open
+// CompactInline:  narrow icon strip when closed, pushes content when open
 enum class SplitViewMode { Overlay, Inline, CompactOverlay, CompactInline };
 
 class UI_API SplitViewWidget : public Widget {
