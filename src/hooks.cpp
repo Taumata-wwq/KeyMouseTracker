@@ -28,7 +28,7 @@ static LRESULT CALLBACK kbdProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
             if (!g_keyDown[vk]) {
                 g_keyDown[vk] = true;
-                recordKey(vk);
+                enqueueKey(vk);   // 只入队：统计写入由主线程计时器 drainInputQueue 完成
             }
         } else if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
             g_keyDown[vk] = false;
@@ -44,7 +44,7 @@ static LRESULT CALLBACK mouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (wParam == WM_LBUTTONDOWN) btn = 1;
         else if (wParam == WM_RBUTTONDOWN) btn = 2;
         else if (wParam == WM_MBUTTONDOWN) btn = 3;
-        if (btn) recordClick(btn, m->pt.x, m->pt.y);
+        if (btn) enqueueClick(btn, m->pt.x, m->pt.y);   // 只入队，统计写入移出回调
     }
     return CallNextHookEx(g_mouse, nCode, wParam, lParam);
 }

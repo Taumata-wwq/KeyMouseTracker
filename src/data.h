@@ -58,13 +58,13 @@ struct AppData {
     bool paused = false;
     bool darkTheme = false;
     uint8_t kbLayout = 0;
+    uint8_t lang = 0;           // 界面语言：0=中文 1=English（尾部持久化字节，旧文件缺省为 0）
     bool optAppTrack = true;    // 前台活动应用统计（仅记录 exe 名+计数，不含按键内容）
     uint8_t idleMin = 5;        // 空闲阈值（分钟，可配置）
     std::set<std::string> excludeApps;  // 前台应用排除列表（exe 名）
     uint32_t lastActivity = 0;
     bool dirty = false;
     bool needsRefresh = false;
-    bool migrated = false;   // v11：旧数据迁移完成标志（一次性，置位后不再重复迁移）
 };
 
 AppData& app();
@@ -86,6 +86,13 @@ void recordKey(uint8_t vk);
 void recordClick(uint8_t btn, LONG x, LONG y);
 void recordMove();
 void recordMoveDist(uint64_t px);
+
+// —— 输入事件队列（钩子回调脱敏）——
+// 低层钩子回调有系统超时（默认约 300ms），回调内只允许 O(1) 入队；map 分配 / IO
+// 一律移出回调，由主线程计时器统一 drainInputQueue() 计入统计。按键防重复仍在钩子内完成。
+void enqueueKey(uint8_t vk);
+void enqueueClick(uint8_t btn, LONG x, LONG y);
+void drainInputQueue();
 
 // 聚合助手（供 UI/导出下钻）：统计指定应用在分钟区间内的按键/点击/移动像素。
 // exe 为空串表示汇总全部应用；minStart/minEnd 为闭合区间，<0 表示不限（0..1439）。

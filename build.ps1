@@ -19,7 +19,19 @@ $coreuiSrc = Join-Path $root 'vendor\core-ui'
 $buildDir  = Join-Path $root 'build-coreui'
 $coreuiLib = Join-Path $buildDir 'core-ui.lib'
 
-$VsPath  = "G:\Program Files\Microsoft Visual Studio\18\Community"
+# 定位 Visual Studio：优先本机硬编码路径，缺失时回退 vswhere（兼容 GitHub Actions 等 CI）
+function Resolve-VsPath {
+    $hardcoded = "G:\Program Files\Microsoft Visual Studio\18\Community"
+    if (Test-Path (Join-Path $hardcoded 'VC\Auxiliary\Build\vcvars64.bat')) { return $hardcoded }
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $p = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if ($p) { return $p }
+    }
+    return $null
+}
+$VsPath  = Resolve-VsPath
+if (-not $VsPath) { throw "Visual Studio (with C++ tools) not found. Install VS or edit the path in build.ps1." }
 $vcvars  = Join-Path $VsPath 'VC\Auxiliary\Build\vcvars64.bat'
 $cmakeExe= Join-Path $VsPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $ninjaExe= Join-Path $VsPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
@@ -73,7 +85,7 @@ if ($LASTEXITCODE -ne 0) { throw "rc failed ($LASTEXITCODE)" }
     /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DNTDDI_VERSION=0x0A000004 `
     /D_CRT_SECURE_NO_WARNINGS /D_SCL_SECURE_NO_WARNINGS `
     /I "$coreuiSrc\include" /I "$root\src" `
-    src\main.cpp src\data.cpp src\hooks.cpp src\autostart.cpp src\export.cpp
+    src\main.cpp src\data.cpp src\hooks.cpp src\autostart.cpp src\export.cpp src\api.cpp src\tray.cpp src\stats_json.cpp src\stats_query.cpp
 if ($LASTEXITCODE -ne 0) { throw "compile failed ($LASTEXITCODE)" }
 
 # 5) 链接
@@ -87,7 +99,7 @@ $sysLibs = @(
     'd3d11.lib','dxguid.lib','gdiplus.lib','imm32.lib','ole32.lib'
 )
 & link.exe /nologo /SUBSYSTEM:WINDOWS /OUT:KeyMouseTracker.exe /OPT:REF /OPT:ICF `
-    main.obj data.obj hooks.obj autostart.obj export.obj app.res `
+    main.obj data.obj hooks.obj autostart.obj export.obj api.obj tray.obj stats_json.obj stats_query.obj app.res `
     $staticLibs $sysLibs
 if ($LASTEXITCODE -ne 0) { throw "link failed ($LASTEXITCODE)" }
 

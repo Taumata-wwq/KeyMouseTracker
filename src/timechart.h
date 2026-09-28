@@ -8,33 +8,14 @@
 #pragma once
 #include <ui_core.h>
 #include <data.h>
+#include "uiutil.h"
+#include "uicolor.h"
 #include <vector>
 #include <string>
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
 #include <unordered_map>
-
-// UTF-8 → UTF-16（组件内自用，避免依赖 main.cpp 的 static widen）
-inline std::wstring tsWiden(const std::string& s) {
-    std::wstring w; w.reserve(s.size());
-    size_t i = 0;
-    while (i < s.size()) {
-        unsigned char c = (unsigned char)s[i];
-        uint32_t cp = 0; int len = 0;
-        if ((c & 0x80) == 0)          { cp = c;        len = 1; }
-        else if ((c & 0xE0) == 0xC0)  { cp = c & 0x1F; len = 2; }
-        else if ((c & 0xF0) == 0xE0)  { cp = c & 0x0F; len = 3; }
-        else if ((c & 0xF8) == 0xF0)  { cp = c & 0x07; len = 4; }
-        else                          { w.push_back((wchar_t)c); i++; continue; }
-        if (i + len > s.size()) break;
-        for (int k = 1; k < len; k++) cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3F);
-        i += len;
-        if (cp < 0x10000) w.push_back((wchar_t)cp);
-        else { cp -= 0x10000; w.push_back((wchar_t)(0xD800 | (cp >> 10))); w.push_back((wchar_t)(0xDC00 | (cp & 0x3FF))); }
-    }
-    return w;
-}
 
 // 数值缩写（纵轴/浮窗共用）
 inline std::wstring tsFmtNum(double v) {
@@ -151,7 +132,8 @@ struct TimeSeriesChart {
         double lo = dataMin, hi = dataMax;
         if (hi <= lo) { hi = t + s + kMinSpan; lo = t - kMinSpan; }
         int bw = (fixedBw > 0) ? fixedBw : bucketForSpan(s);
-        hi += bw;   // 右侧留一个桶余量，使"现在"（最右侧数据）完整可见
+        lo -= bw;   // 左右各留一个桶余量，边缘数据（首末桶/折线端点）不被裁剪
+        hi += bw;
         if (s > hi - lo) s = hi - lo;   // 跨度不超过数据域：任意缩放档位都无两端空白
         if (t < lo) t = lo;
         if (t + s > hi) t = hi - s;
@@ -180,7 +162,8 @@ struct TimeSeriesChart {
         // 直连映射：拖拽期视口 1:1 跟手，不经动画插值
         double lo = dataMin, hi = dataMax;
         int bw = (fixedBw > 0) ? fixedBw : bucketForSpan(span);
-        hi += bw;   // 右侧留一个桶余量，最右侧数据完整可见
+        lo -= bw;   // 左右各留一个桶余量，边缘数据不被裁剪
+        hi += bw;
         if (hi > lo) {
             double sp = span; if (sp > hi - lo) sp = hi - lo;
             if (nt < lo) nt = lo;
@@ -225,6 +208,7 @@ struct TimeSeriesChart {
         if (!dragging && std::fabs(flingVel) > 0.05) {
             double lo = dataMin, hi = dataMax;
             int bw = (fixedBw > 0) ? fixedBw : bucketForSpan(span);
+            lo -= bw;   // 左右各留一个桶余量
             hi += bw;
             double sp = span; if (sp > hi - lo) sp = hi - lo;
             double nt = tStart + flingVel;
@@ -262,7 +246,7 @@ struct TimeSeriesChart {
     // 全局分钟 -> 悬浮时间戳（按精度）：分钟级 YYYY-MM-DD HH:MM / 日级 YYYY-MM-DD / 月级 YYYY-MM
     std::wstring labelFor(int bw, int64_t gm) const {
         int day = (int)(gm / 1440); int min = (int)(gm % 1440);
-        std::wstring wds = tsWiden(dayIndexToStr(day));
+        std::wstring wds = widen(dayIndexToStr(day));
         if (bw >= 1440) {
             if (bw >= 10080 && wds.size() >= 7) return wds.substr(0, 7); // 周/月 -> YYYY-MM
             return wds;                                                  // 日 -> YYYY-MM-DD
@@ -342,10 +326,6 @@ struct TimeSeriesChart {
     }
 
     void draw(UiDrawCtx ctx, UiRect rect, bool dark);
-
-    static UiColor tsColor(int r, int g, int b, int a = 255) {
-        return UiColor{ r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f };
-    }
 };
 
 // 悬浮框绘制（首两行时间范围 + 后续系列行）
@@ -356,8 +336,8 @@ inline void drawTooltipImpl(TimeSeriesChart& c, UiDrawCtx ctx, UiRect rect,
 
 // 绘制实现：背景 + 网格 + 纵轴 + 柱/折线 + 十字光标 + 悬浮浮窗
 inline void TimeSeriesChart::draw(UiDrawCtx ctx, UiRect rect, bool dark) {
-    UiColor axisCol = dark ? tsColor(140, 140, 140) : tsColor(138, 138, 140);
-    UiColor gridCol = dark ? tsColor(58, 58, 58) : tsColor(235, 235, 235);
+    UiColor axisCol = dark ? rgb255(140, 140, 140) : rgb255(138, 138, 140);
+    UiColor gridCol = dark ? rgb255(58, 58, 58) : rgb255(235, 235, 235);
 
     int bw = (fixedBw > 0) ? fixedBw : bucketForSpan(span);
     int64_t g0 = (int64_t)std::floor(tStart / (double)bw) * bw;
@@ -376,8 +356,8 @@ inline void TimeSeriesChart::draw(UiDrawCtx ctx, UiRect rect, bool dark) {
     // axis=0..1 → 左；axis=2..3 → 右。未启用槽位不占宽。
     float maxV[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
     UiColor axCol[4] = {
-        tsColor(138, 138, 140), tsColor(138, 138, 140),
-        tsColor(138, 138, 140), tsColor(138, 138, 140)
+        rgb255(138, 138, 140), rgb255(138, 138, 140),
+        rgb255(138, 138, 140), rgb255(138, 138, 140)
     };
     bool   axOn[4] = { false, false, false, false };
     float  axAlpha[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -425,9 +405,10 @@ inline void TimeSeriesChart::draw(UiDrawCtx ctx, UiRect rect, bool dark) {
     float sumL = 0.0f, sumR = 0.0f;
     for (int j = 0; j < leftSlots;  ++j) sumL += kLeftSlotW  * axAlpha[leftAxes[j]];
     for (int j = 0; j < rightSlots; ++j) sumR += kRightSlotW * axAlpha[rightAxes[j]];
-    // 直接取 alpha 加权槽宽（axAlpha 已由 tick 逐帧平滑），使槽收回与淡出严格同帧，无 gk 滞后
-    plotL = leftSlots  > 0 ? sumL : 6.0f;
-    plotR = rightSlots > 0 ? sumR : 6.0f;
+    // 槽宽随 alpha 平滑伸缩；无轴时保留 6px 边距。用 max 钳制下限，避免最后一根轴淡出时
+    // 槽宽塌到 0 又跳回 6px 的「先冲出再回弹」跳变（轴淡出到底应自然收敛到 6px 边距）。
+    plotL = std::max(sumL, 6.0f);
+    plotR = std::max(sumR, 6.0f);
 
     float plotW = (rect.right - rect.left) - plotL - plotR;
     float plotH = (rect.bottom - rect.top) - plotT - plotB;
@@ -585,7 +566,7 @@ inline void TimeSeriesChart::draw(UiDrawCtx ctx, UiRect rect, bool dark) {
     // 十字光标：吸附最近桶中心 + 高亮 + 浮窗
     if (hoverActive && hoverBucket >= 0 && hoverBucket < cnt) {
         float ccx = bucketX(hoverBucket);
-        ui_draw_line(ctx, ccx, py0, ccx, py1, tsColor(176, 186, 198, 200), 1.0f);
+        ui_draw_line(ctx, ccx, py0, ccx, py1, rgb255(176, 186, 198, 200), 1.0f);
         if (line) {
             // 折线：各系列在命中桶处画圆点
             for (size_t si = 0; si < nSeries; ++si) {
@@ -612,7 +593,7 @@ inline void TimeSeriesChart::draw(UiDrawCtx ctx, UiRect rect, bool dark) {
                 if (v > 0) {
                     float hbar = plotH * (v / m);
                     ui_draw_rounded_rect(ctx, UiRect{ gx, py1 - hbar, gx + w, py1 },
-                                         0.0f, 0.0f, tsColor(255, 255, 255, 130), 1.0f);
+                                         0.0f, 0.0f, rgb255(255, 255, 255, 130), 1.0f);
                 }
                 gx += w;
             }
@@ -650,14 +631,14 @@ inline void drawTooltipImpl(TimeSeriesChart& c, UiDrawCtx ctx, UiRect rect,
     float by = c.hoverY - bh - 8; if (by < rect.top) by = c.hoverY + 12;
     float bx = c.hoverX - bw2 - 10; if (bx < rect.left) bx = c.hoverX + 10;
     UiRect br = { bx, by, bx + bw2, by + bh };
-    ui_draw_fill_rounded_rect(ctx, br, 5.0f, 5.0f, TimeSeriesChart::tsColor(24, 26, 31, 235));
-    ui_draw_rounded_rect(ctx, br, 5.0f, 5.0f, TimeSeriesChart::tsColor(120, 126, 136, 120), 1.0f);
+    ui_draw_fill_rounded_rect(ctx, br, 5.0f, 5.0f, rgb255(24, 26, 31, 235));
+    ui_draw_rounded_rect(ctx, br, 5.0f, 5.0f, rgb255(120, 126, 136, 120), 1.0f);
     float yy = br.top + 6;
     ui_draw_text_ex(ctx, tStart.c_str(), UiRect{ br.left + 10, yy, br.right - 4, yy + 16 },
-                    TimeSeriesChart::tsColor(255, 255, 255), 12, 2, 0);
+                    rgb255(255, 255, 255), 12, 2, 0);
     yy += 16;
     ui_draw_text_ex(ctx, tEnd.c_str(), UiRect{ br.left + 10, yy, br.right - 4, yy + 16 },
-                    TimeSeriesChart::tsColor(160, 166, 176), 12, 2, 0);
+                    rgb255(160, 166, 176), 12, 2, 0);
     yy += 16;
     for (size_t i = 0; i < lines.size() && i < curVis.size(); ++i) {
         ui_draw_text_ex(ctx, lines[i].c_str(),

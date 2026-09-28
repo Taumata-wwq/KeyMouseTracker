@@ -14,10 +14,15 @@ src/app_uix.embed.h
 
 # 运行时数据 / 调试日志
 *.bin
+*.bin.bak
+*.bin.orphan
+*.bin.bak.orphan
+*.tmp
 crash.log
 
 # 临时文件
 out_manifest_check.xml
+tools/
 
 # IDE 本地工作/规划文档
 .trae/

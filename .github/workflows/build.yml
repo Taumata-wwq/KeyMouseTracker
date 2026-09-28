@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # vendor/core-ui 直接随仓库入库（非子模块），无需 submodules: recursive
+
+      - name: Build (core-ui + exe)
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+
+      - name: Run unit tests
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\build_test.ps1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KeyMouseTracker
+          path: KeyMouseTracker.exe
+          if-no-files-found: error
+
+      - name: Upload test report note
+        if: always()
+        run: |
+          Write-Host "Tests exited with code $LASTEXITCODE (build_test.ps1 fails the step on non-zero)."
