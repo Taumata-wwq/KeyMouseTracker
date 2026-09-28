@@ -21,9 +21,11 @@ $coreuiLib = Join-Path $buildDir 'core-ui.lib'
 
 # 定位 Visual Studio：优先本机硬编码路径，缺失时回退 vswhere（兼容 GitHub Actions 等 CI）
 function Resolve-VsPath {
-    $hardcoded = "G:\Program Files\Microsoft Visual Studio\18\Community"
-    $hcVcvars = Join-Path $hardcoded 'VC\Auxiliary\Build\vcvars64.bat'
-    if (Test-Path $hcVcvars -ErrorAction SilentlyContinue) { return $hardcoded }
+    try {
+        $hardcoded = "G:\Program Files\Microsoft Visual Studio\18\Community"
+        $hcVcvars = Join-Path $hardcoded 'VC\Auxiliary\Build\vcvars64.bat'
+        if (Test-Path $hcVcvars -ErrorAction SilentlyContinue) { return $hardcoded }
+    } catch { }
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere -ErrorAction SilentlyContinue) {
         $p = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
